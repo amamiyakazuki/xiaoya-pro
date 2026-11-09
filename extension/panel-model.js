@@ -149,7 +149,7 @@
     if (status !== 'ok' || !failures.length) return null;
     const courses = [...new Set(failures.filter(item => item.stage === 'tasks').map(item => item.courseName))];
     if (courses.length) return { text: `${courses.join('、')}读取失败，数量可能不完整`, action: 'retry', label: '重试' };
-    if (failures.some(item => item.stage === 'unfinished')) return { text: '部分课程可能未读取到，数量可能不完整', action: 'retry', label: '重试' };
+    if (failures.some(item => item.stage === 'unfinished' || item.stage === 'courses')) return { text: '部分课程可能未读取到，数量可能不完整', action: 'retry', label: '重试' };
     return { text: '部分任务名称读取失败', action: 'retry', label: '重试' };
   }
 

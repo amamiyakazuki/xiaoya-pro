@@ -123,6 +123,7 @@ test('noticeFor explains every incomplete state instead of showing zero tasks', 
   const stage = (s, name) => ({ courseId: '1', courseName: name, stage: s });
   assert.equal(model.noticeFor('ok', '', [stage('tasks', '高数'), stage('tasks', '物理'), stage('names', '英语')]).text, '高数、物理读取失败，数量可能不完整');
   assert.match(model.noticeFor('ok', '', [stage('unfinished', null)]).text, /可能未读取到/);
+  assert.match(model.noticeFor('ok', '', [stage('courses', null)]).text, /可能未读取到/);
   assert.equal(model.noticeFor('ok', '', [stage('names', '英语')]).text, '部分任务名称读取失败');
 });
 

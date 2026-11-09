@@ -42,6 +42,7 @@ function harness({ routes = {}, token = 'token-a', account = 'u1', unfinished = 
       }
       if (path.endsWith('oauth2/info')) return ok({ info: { id: state.account ?? account } });
       if (path.endsWith('un_finish')) return ok(unfinished);
+      if (path.includes('student/groups')) return ok([]);
       const id = path.match(/group_id=(\d+)/)?.[1];
       if (path.includes('queryTaskNotices')) return ok({ student_tasks: [noticeRow(Number(id) + 1)] });
       if (path.includes('queryCourseResources')) return ok([{ task_id: Number(id) + 1, name: `任务${id}` }]);
@@ -99,7 +100,7 @@ test('refresh reads every course from notices, joins names, and also returns fin
 test('every request is a GET to the Xiaoya origin and never touches completion or learning-record APIs', async () => {
   const f = harness({ unfinished: [unfinishedRow('100', 1), unfinishedRow('200', 2)] });
   await f.store.refresh();
-  assert.equal(f.state.calls.length, 6);
+  assert.equal(f.state.calls.length, 7);
   for (const call of f.state.calls) {
     assert.equal(call.init.method, 'GET');
     assert.equal(call.init.body, undefined);
@@ -114,33 +115,33 @@ test('never more than three requests run at once', async () => {
   const f = harness({ unfinished });
   const result = await f.store.refresh();
   assert.equal(result.tasks.length, 8);
-  assert.equal(f.state.calls.length, 18);
+  assert.equal(f.state.calls.length, 19);
   assert.equal(f.state.peak, data.MAX_CONCURRENT_REQUESTS);
 });
 
 test('simultaneous refreshes share one set of requests', async () => {
   const f = harness();
   const [a, b] = await Promise.all([f.store.refresh(), f.store.refresh()]);
-  assert.equal(f.state.calls.length, 4);
+  assert.equal(f.state.calls.length, 5);
   assert.equal(a, b);
   await f.store.refresh();
-  assert.equal(f.state.calls.length, 8);
+  assert.equal(f.state.calls.length, 10);
 });
 
 test('load uses the cache for five minutes, then refetches; force always refetches', async () => {
   const f = harness();
   await f.store.load();
-  assert.equal(f.state.calls.length, 4);
+  assert.equal(f.state.calls.length, 5);
   f.state.time = T0 + data.CACHE_TTL_MS - 1;
   const cached = await f.store.load();
   assert.equal(cached.fromCache, true);
-  assert.equal(f.state.calls.length, 4);
+  assert.equal(f.state.calls.length, 5);
   await f.store.load({ force: true });
-  assert.equal(f.state.calls.length, 8);
+  assert.equal(f.state.calls.length, 10);
   f.state.time += data.CACHE_TTL_MS;
   const fresh = await f.store.load();
   assert.equal(fresh.fromCache, false);
-  assert.equal(f.state.calls.length, 12);
+  assert.equal(f.state.calls.length, 15);
 });
 
 test('peek shows the cache without any request and reports staleness', async () => {
@@ -216,7 +217,7 @@ test('no token means login is required and nothing is requested', async () => {
 });
 
 test('an expired login is reported as login-required, not as zero tasks', async () => {
-  for (const route of ['oauth2/info', 'un_finish', 'queryTaskNotices', 'queryCourseResources']) {
+  for (const route of ['oauth2/info', 'un_finish', 'student/groups', 'queryTaskNotices', 'queryCourseResources']) {
     const f = harness({ routes: { [route]: http(401) } });
     const result = await f.store.refresh();
     assert.equal(result.status, 'login-required', route);
@@ -251,6 +252,32 @@ test('a hung request times out and is reported instead of blocking the list', as
   }) } });
   const result = await f.store.refresh();
   assert.deepEqual(result.failures.map(item => item.stage), ['tasks']);
+});
+
+test('the course list adds all-done courses with their real names', async () => {
+  const f = harness({ unfinished: [unfinishedRow('100', 1)], routes: { 'student/groups': ok([{ id: 100, name: '课程100' }, { id: 700, name: '全部做完的课' }, null, { name: '缺编号' }]) } });
+  const result = await f.store.refresh();
+  assert.deepEqual(result.failures, []);
+  assert.deepEqual(result.tasks.map(task => task.courseName), ['课程100', '全部做完的课']);
+  assert.ok(f.state.calls.some(call => call.path === '/api/jx-iresource/group/student/groups?time_flag=1'));
+});
+
+test('if the course list fails, courses from unfinished tasks still load and the gap is reported', async () => {
+  const f = harness({ routes: { 'student/groups': http(500) } });
+  const result = await f.store.refresh();
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(result.failures.map(item => item.stage), ['courses']);
+  assert.equal(result.tasks.length, 1);
+});
+
+test('a course list in an unexpected format counts as a failure', async () => {
+  const f = harness({ routes: { 'student/groups': ok({ list: [] }) } });
+  assert.deepEqual((await f.store.refresh()).failures.map(item => item.stage), ['courses']);
+});
+
+test('if both lists fail with no known courses, the result is an error rather than zero tasks', async () => {
+  const f = harness({ routes: { 'student/groups': http(500), un_finish: http(500) } });
+  assert.equal((await f.store.refresh()).status, 'error');
 });
 
 test('remembered courses are read even with no unfinished tasks, so all-done courses appear', async () => {

@@ -5,6 +5,7 @@
   const PATHS = {
     account: '/api/jx-auth/oauth2/info',
     unfinished: '/api/jx-stat/group/task/un_finish',
+    courses: '/api/jx-iresource/group/student/groups?time_flag=1',
     notices: id => `/api/jx-stat/group/task/queryTaskNotices?group_id=${encodeURIComponent(id)}&role=1`,
     resources: id => `/api/jx-iresource/resource/queryCourseResources?group_id=${encodeURIComponent(id)}`
   };
@@ -202,18 +203,19 @@
         const account = String(info.info.id);
         await clearOtherAccount(account);
 
-        let unfinished = [];
+        const [unfinishedResult, courseListResult] = await Promise.allSettled([request(PATHS.unfinished, token), request(PATHS.courses, token)]);
+        if (isAuthFailure(unfinishedResult) || isAuthFailure(courseListResult)) throw new AuthRequiredError('登录已失效');
+        const listOf = result => (result.status === 'fulfilled' && Array.isArray(result.value) ? result.value : null);
+        const unfinished = listOf(unfinishedResult) || [];
+        const courseList = listOf(courseListResult) || [];
         const failures = [];
-        try {
-          const data = await request(PATHS.unfinished, token);
-          if (!Array.isArray(data)) throw new Error('未完成任务格式不正确');
-          unfinished = data;
-        } catch (error) {
-          if (error instanceof AuthRequiredError) throw error;
-          failures.push({ courseId: null, courseName: null, stage: 'unfinished' });
-        }
+        if (!listOf(unfinishedResult)) failures.push({ courseId: null, courseName: null, stage: 'unfinished' });
+        if (!listOf(courseListResult)) failures.push({ courseId: null, courseName: null, stage: 'courses' });
 
-        const found = unfinished.map(row => ({ id: row?.group_id, name: row?.group_name }));
+        const found = [
+          ...courseList.map(row => ({ id: row?.id, name: row?.name })),
+          ...unfinished.map(row => ({ id: row?.group_id, name: row?.group_name }))
+        ];
         const courses = Object.values(await mergeCourses(account, found));
         if (failures.length && !courses.length) return { status: 'error', message: '任务读取失败，请稍后重试', tasks: [], failures };
 
