@@ -50,6 +50,35 @@ function worker({ connected = false, injectionFails = false, runReply = { ok: tr
     send(message, sender = {}) { return new Promise(resolve => listener({ options: { rate: 2 }, tabId: 1, ...message }, sender, resolve)); }
   };
 }
+function workerForPanel({ sidePanel } = {}) {
+  let updated;
+  const remembered = [];
+  const context = vm.createContext({ URL, setTimeout, clearTimeout, crypto: {}, chrome: {
+    alarms: { create() {}, onAlarm: { addListener() {} } },
+    runtime: { onMessage: { addListener() {} } },
+    storage: { session: {} },
+    sidePanel,
+    tabs: { onUpdated: { addListener(fn) { updated = fn; } }, onRemoved: { addListener() {} } }
+  } });
+  context.importScripts = name => {
+    assert.equal(name, 'task-data.js');
+    context.XiaoyaTaskData = { createTaskStore: () => ({ rememberCourses: async list => { remembered.push(...list); } }) };
+  };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../extension/worker.js'), 'utf8'), context);
+  return { remembered, navigate: url => updated(1, { url }) };
+}
+test('the toolbar icon is set to open the side panel', () => {
+  const calls = [];
+  workerForPanel({ sidePanel: { setPanelBehavior: async options => { calls.push(options.openPanelOnActionClick); } } });
+  assert.deepEqual(calls, [true]);
+});
+test('opening a course page remembers that course, and other pages are ignored', () => {
+  const f = workerForPanel();
+  f.navigate('https://whut.ai-augmented.com/app/jx-web/mycourse/12345/resource/_/9');
+  f.navigate('https://whut.ai-augmented.com/app/jx-web/mycourse');
+  f.navigate('https://example.com/app/jx-web/mycourse/999');
+  assert.deepEqual(f.remembered.map(course => course.id), ['12345']);
+});
 test('scan repairs a missing content-script connection before starting', async () => {
   const f = worker();
   assert.equal((await f.send({ type: 'scan' })).ok, true);

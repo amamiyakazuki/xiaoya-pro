@@ -212,10 +212,24 @@ test('background shim is reversible and does not change ordinary element blur', 
 });
 test('manifest references only files included in the extension', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'extension/manifest.json'), 'utf8'));
-  for (const name of [manifest.background.service_worker, manifest.action.default_popup, ...manifest.content_scripts.flatMap(s => s.js)]) {
+  for (const name of [manifest.background.service_worker, manifest.side_panel.default_path, ...manifest.content_scripts.flatMap(s => s.js)]) {
     assert.ok(fs.existsSync(path.join(root, 'extension', name)), name);
   }
   assert.deepEqual(manifest.host_permissions, ['https://whut.ai-augmented.com/*']);
+});
+
+test('the toolbar icon opens the side panel and no cookie permission is requested', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'extension/manifest.json'), 'utf8'));
+  assert.equal(manifest.action.default_popup, undefined);
+  assert.ok(manifest.permissions.includes('sidePanel'));
+  assert.equal(manifest.permissions.includes('cookies'), false);
+});
+
+test('the side panel page references only files included in the extension', () => {
+  const html = fs.readFileSync(path.join(root, 'extension/sidepanel.html'), 'utf8');
+  const files = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map(match => match[1]);
+  assert.ok(files.length >= 5);
+  for (const name of files) assert.ok(fs.existsSync(path.join(root, 'extension', name)), name);
 });
 
 test('real PPT heading has no title attribute and preserves double spaces', async () => {

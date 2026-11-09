@@ -1,4 +1,6 @@
 'use strict';
+if (typeof importScripts === 'function') importScripts('task-data.js');
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 const KEY = 'xiaoyaRun';
 chrome.alarms.create('xiaoya-tick', { periodInMinutes: 0.5 });
 // Serialize commands so two tabs cannot acquire the queue simultaneously.
@@ -113,6 +115,11 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     reply({ error: error.message });
   });
   return true;
+});
+// 记住打开过的课程页，这样全部做完的课程也能出现在任务面板里。
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  const id = info.url?.match(/^https:\/\/whut\.ai-augmented\.com\/app\/jx-web\/mycourse\/(\d+)/)?.[1];
+  if (id) globalThis.XiaoyaTaskData?.createTaskStore().rememberCourses([{ id }]).catch(() => {});
 });
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name !== 'xiaoya-tick') return;
