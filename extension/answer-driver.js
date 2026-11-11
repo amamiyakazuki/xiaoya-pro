@@ -20,7 +20,7 @@
     async function send(task, action, extra = {}) {
       await target(task);
       const response = await api.tabs.sendMessage(tabId, { type: 'auto:page', batchId: getBatchId(), task, pageToken, action, ...extra }, { frameId: 0 });
-      if (!response?.ok) throw Error(response?.error || '作业页面没有确认操作。');
+      if (!response?.ok) throw Object.assign(Error(response?.error || '作业页面没有确认操作。'), { submissionBlocked: action === 'confirm' });
       return response;
     }
     async function inspect(task) {
@@ -78,8 +78,11 @@
           const state = await inspect(task);
           receiptSeen ||= state.submissionSucceeded === true;
           if (!receiptSeen && state.submitted) return true;
-          if (!receiptSeen && !stopped) await send(task, 'confirm');
-        } catch (error) { if (error.fatal) break; }
+          if (!receiptSeen && !stopped) {
+            const confirmation = await send(task, 'confirm');
+            if (confirmation.blocked) throw Object.assign(Error(confirmation.reason), { submissionBlocked: true });
+          }
+        } catch (error) { if (error.submissionBlocked) throw error; if (error.fatal) break; }
         // Read the authoritative task state as soon as the current submit succeeds.
         // Retain a bounded wait for server propagation, without clicking or resubmitting.
         if (receiptSeen && verifySubmitted && await verifySubmitted(task)) return true;

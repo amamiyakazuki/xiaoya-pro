@@ -14,5 +14,8 @@
 if(new URLSearchParams(location.search).get('task')==='2'){
  document.querySelector('.score_sub_title').textContent='共1题（100分）';document.getElementById('question_content').innerHTML='<div class="question"><div class="exam_question_stem"><div class="stem_title">上传实验报告</div><span class="score">[附件题 100 分]</span></div><div id="question_201" class="question_attach_subject"><input type="file"></div></div><button type="submit">提交</button>';
 }
+const card=document.createElement('div');card.className='answer_info_card';document.querySelector('#survey_page').append(card);
+function syncCard(){card.innerHTML='<ul class="sheet_list">'+[...document.querySelectorAll('[id^="question_"]')].filter(e=>/^question_\d+$/.test(e.id)).map((e,i)=>{const fields=[...e.querySelectorAll('input,textarea')];const done=fields[0]?.type==='radio'||fields[0]?.type==='checkbox'?fields.some(f=>f.checked):fields.length>0&&fields.every(f=>f.type!=='file'&&f.value.trim());return `<li title="${done?'已答题':'未答题'}" class="${done?'finish':''}"><a id="#${e.id.slice(9)}">${i+1}</a></li>`;}).join('')+'</ul>';}
+document.addEventListener('input',syncCard);document.addEventListener('change',syncCard);syncCard();
 document.querySelector('form').addEventListener('submit',e=>{e.preventDefault();const modal=document.createElement('div');modal.className='xy-modal-warp';modal.setAttribute('role','dialog');modal.innerHTML='<h3>提交作业/测练</h3><p>是否确定提交？</p><button type="button"><span>提 交</span></button><button type="button"><span>取 消</span></button>';document.body.append(modal);modal.querySelector('button').onclick=()=>{const button=document.querySelector('button[type=submit]');button.disabled=true;button.textContent='已提交';modal.remove();};});
 </script></html>

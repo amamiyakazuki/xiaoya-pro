@@ -78,9 +78,12 @@ test('video queue and duplicate task identity reject before any page action',asy
  const f=fixture({videoActive:async()=>true});await assert.rejects(f.start(),/视频/);assert.equal(f.calls.length,0);
  const g=fixture();await assert.rejects(g.start([task(),{...task(),id:'duplicate'}]),/重复/);
 });
-function page({manual='',total=1,permit=async()=>true}={}) {
+function page({manual='',total=1,permit=async()=>true,delay=async()=>{}}={}) {
  const {document,window}=parseHTML(`<html><body><div id="survey_page"><span class="score_sub_title">共${total}题（100分）</span><form id="question_content"><div class="question"><div class="exam_question_stem"><div class="stem_title">填入结果 <span class="xy_richtext_blank_number_warp">(1) ____</span> 和 <span class="xy_richtext_blank_number_warp">(2) ____</span></div><span class="score">[填空题 100 分]</span></div><div id="question_123" class="question_gap_subject"><div class="_label">填空1:</div><textarea>${manual}</textarea><div class="_label">填空2:</div><textarea></textarea></div></div><button type="submit">提交</button></form></div></body></html>`);
- const location=new URL(B.canonical(task()).url);const adapter=createAdapter({document,location,permit,uuid:()=> 'page',delay:async()=>{}});
+ const card=document.createElement('div');card.className='answer_info_card';card.innerHTML='<ul class="sheet_list"><li><a id="#123">1</a></li></ul>';document.querySelector('#survey_page').append(card);
+ const syncCard=()=>{const done=[...document.querySelectorAll('textarea')].every(e=>e.value.trim());card.querySelector('li').title=done?'已答题':'未答题';card.querySelector('li').className=done?'finish':'';};
+ document.addEventListener('input',syncCard);syncCard();
+ const location=new URL(B.canonical(task()).url);const adapter=createAdapter({document,location,permit,uuid:()=> 'page',delay});
  const command=(action,extra={})=>adapter.command({action,task:B.canonical(task()),batchId:'batch',pageToken:'page',...extra});
  return {document,window,location,adapter,command};
 }
@@ -133,7 +136,7 @@ test('background rejects foreign page mutation permits',async()=>{
 test('DOM refuses unknown modal confirmations and incomplete-answer warnings',async()=>{
  const p=page();const s=(await p.command('inspect')).snapshot;await p.command('fill',{item:{id:q.id,fingerprint:s.questions[0].fingerprint,solution:{kind:'fill',values:['2','4']}}});
  let clicked=0;const modal=p.document.createElement('div');modal.className='ant-modal';modal.innerHTML='<p>存在未作答题目，确定提交吗？</p><button>确定</button>';p.document.body.append(modal);modal.querySelector('button').addEventListener('click',()=>clicked++);
- await p.command('confirm');assert.equal(clicked,0);await p.command('submit',{fingerprint:s.fingerprint});await p.command('confirm');assert.equal(clicked,0);
+ await p.command('confirm');assert.equal(clicked,0);modal.remove();await p.command('submit',{fingerprint:s.fingerprint});p.document.body.append(modal);await p.command('confirm');assert.equal(clicked,0);
  modal.querySelector('p').textContent='确认提交该份作业？';await p.command('confirm');assert.equal(clicked,1);await p.command('confirm');assert.equal(clicked,1);
 });
 test('content changed while awaiting per-write authorization is not filled',async()=>{
@@ -374,4 +377,70 @@ test('changed paper or incomplete non-attachment readback cannot be reported as 
   await f.start();const state=await settled(f.engine);assert.equal(state.results[0].status,'pending');assert.equal(state.inFlight,false);assert.ok(!f.calls.some(c=>c[0]==='submit'));
   if(changedPaper)assert.ok(!f.calls.some(c=>c[0]==='fill'));
  }
+});
+
+// B1-017: real empty-list modal structure, with synthetic questions and IDs.
+function noAnswerDialog(p, contents='') {
+ const wrap=p.document.createElement('div');wrap.setAttribute('role','dialog');
+ wrap.innerHTML=`<div class="ant-modal NoAnswerModal"><div class="ant-modal-title">提交</div><div class="NoAnswerModal_container"><div class="sub_caption">未完成的题目：</div><ul class="no_answer_sheet_list">${contents}</ul><div class="tip">*可在屏幕右侧答题卡内查看各试题的作答状态</div><button>提交</button><button>取消</button></div></div>`;
+ p.document.body.append(wrap);return wrap;
+}
+async function preparedPage(options={}) {
+ const p=page(options),s=p.adapter.inspect(B.canonical(task()));
+ await p.command('fill',{item:{id:q.id,fingerprint:s.questions[0].fingerprint,solution:{kind:'fill',values:['2','4']}}});
+ return {...p,fingerprint:s.fingerprint};
+}
+test('empty unfinished list confirms once only after synchronized card and stable answers',async()=>{
+ const waits=[];const p=await preparedPage({delay:async ms=>waits.push(ms)});
+ await p.command('submit',{fingerprint:p.fingerprint});const modal=noAnswerDialog(p);let clicks=0;modal.querySelector('button').addEventListener('click',()=>clicks++);
+ waits.length=0;await p.command('confirm');await p.command('confirm');assert.equal(clicks,1);assert.deepEqual(waits,[250]);
+});
+test('real unfinished numbers, unknown list entries and extra warnings block with specific reasons',async()=>{
+ for(const [html,expected] of [['<li><a>2</a></li><li><a>4</a></li>',/第 2、4 题/],['<li><span>未知结构</span></li>',/无法可靠读取题号/]]){
+  const p=await preparedPage();await p.command('submit',{fingerprint:p.fingerprint});const modal=noAnswerDialog(p,html);let clicks=0;modal.querySelector('button').addEventListener('click',()=>clicks++);
+  const result=await p.command('confirm');assert.equal(result.blocked,true);assert.match(result.reason,expected);assert.equal(clicks,0);
+ }
+ const p=await preparedPage();await p.command('submit',{fingerprint:p.fingerprint});const modal=noAnswerDialog(p);modal.querySelector('.tip').append('保存失败');assert.equal((await p.command('confirm')).blocked,true);
+});
+test('submission waits for delayed card synchronization and fails boundedly when card is missing or unfinished',async()=>{
+ let action=false,count=0,p; p=await preparedPage({delay:async()=>{if(action && ++count===2){const li=p.document.querySelector('.sheet_list li');li.title='已答题';li.className='finish';}}});
+ let clicks=0;p.document.querySelector('button[type=submit]').addEventListener('click',()=>clicks++);p.document.querySelector('.sheet_list li').title='未答题';action=true;
+ await p.command('submit',{fingerprint:p.fingerprint});assert.equal(clicks,1);assert.equal(count,3);
+ for(const missing of [true,false]){
+  let waits=0;const other=await preparedPage({delay:async()=>waits++});waits=0;
+  if(missing)other.document.querySelector('.answer_info_card').remove();else other.document.querySelector('.sheet_list li').title='未答题';
+  let clicked=0;other.document.querySelector('button[type=submit]').addEventListener('click',()=>clicked++);
+  const result=await other.command('submit',{fingerprint:other.fingerprint});assert.equal(result.blocked,true);assert.match(result.reason,missing?/无法读取平台答题卡/:/第 1 题/);assert.equal(clicked,0);assert.equal(waits,11);
+ }
+});
+test('empty modal loading is bounded and a late unfinished number cannot be confirmed',async()=>{
+ for(const lateNumber of [true,false]){
+  let checking=false,modal,waits=0;const p=await preparedPage({delay:async()=>{if(checking){waits++;if(lateNumber && waits===1){modal.querySelector('.no_answer_sheet_list').innerHTML='<li><a>1</a></li>';modal.querySelector('.ant-spin-spinning').remove();}}}});
+  await p.command('submit',{fingerprint:p.fingerprint});modal=noAnswerDialog(p);const spinner=p.document.createElement('div');spinner.className='ant-spin-spinning';modal.querySelector('.NoAnswerModal').append(spinner);
+  let clicks=0;modal.querySelector('button').addEventListener('click',()=>clicks++);checking=true;
+  const result=await p.command('confirm');assert.equal(result.blocked,true);assert.match(result.reason,lateNumber?/第 1 题/:/仍在加载/);assert.equal(clicks,0);assert.equal(waits,lateNumber?1:11);
+ }
+});
+test('stop or changed answers during stable confirmation never clicks submit',async()=>{
+ for(const stop of [true,false]){
+  let checking=false,p;p=await preparedPage({delay:async()=>{if(checking){if(stop)await p.command('halt');else p.document.querySelector('textarea').value='';}}});
+  await p.command('submit',{fingerprint:p.fingerprint});const modal=noAnswerDialog(p);let clicks=0;modal.querySelector('button').addEventListener('click',()=>clicks++);checking=true;
+  await assert.rejects(p.command('confirm'),stop?/停止/:/答案已变化/);assert.equal(clicks,0);
+ }
+});
+test('blocked confirmation reaches batch result immediately and never starts next task or resubmits',async()=>{
+ let p,url,clock=0;const actions=[];
+ const driver=createDriver({chrome:{tabs:{async create(tab){url=tab.url;p=page();p.location.href=url;p.document.querySelector('button[type=submit]').addEventListener('click',()=>noAnswerDialog(p,'<li><a>1</a></li>'));return {id:1};},async get(){return {id:1,url};},async sendMessage(id,m){actions.push(m.action);return p.adapter.command(m);}}},getBatchId:()=> 'batch',now:()=>clock,delay:async ms=>{clock+=ms;}});
+ const f=fixture({driver,query:async()=>({solution:{kind:'fill',values:['2','4']}})});await f.start([task(),task(2)]);const state=await settled(f.engine);
+ assert.equal(state.stage,'uncertain');assert.match(state.message,/第 1 题/);assert.match(state.results[0].message,/第 1 题/);assert.equal(state.results[1].status,'waiting');assert.equal(clock,0);assert.equal(actions.filter(a=>a==='submit').length,1);assert.equal(actions.filter(a=>a==='confirm').length,1);
+});
+test('pre-submit stability failure pauses without claiming a submission is in flight',async()=>{
+ const f=fixture({driver:{submit:async()=>({ok:true,blocked:true,reason:'平台答题卡尚未确认已答：第 1 题。'})}});await f.start([task(),task(2)]);const state=await settled(f.engine);
+ assert.equal(state.stage,'paused');assert.equal(state.inFlight,false);assert.match(state.message,/第 1 题/);assert.ok(!f.calls.some(c=>c[0]==='verify'));assert.equal(state.results[1].status,'waiting');
+});
+
+test('closed execution tab still falls back to fresh platform receipt',async()=>{
+ let closed=false,reads=0;const base=B.canonical(task());
+ const d=createDriver({chrome:{tabs:{async create(){return {id:1};},async get(){if(closed)throw Error('closed');return {id:1,url:base.url};},async sendMessage(){return {ok:true,snapshot:{pageToken:'p',complete:true}};}}},getBatchId:()=> 'batch',verifySubmitted:async()=>{reads++;return true;}});
+ await d.open(base,new AbortController().signal);closed=true;assert.equal(await d.verify(base),true);assert.equal(reads,1);
 });

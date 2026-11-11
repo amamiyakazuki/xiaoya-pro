@@ -16,6 +16,67 @@
       const matches = dialogs.filter(isSuccessDialog);
       return matches.filter(e => !matches.some(other => other !== e && e.contains(other)));
     }
+    const activeDialogs = () => {
+      const all = [...document.querySelectorAll('.ant-modal,.ant-modal-confirm,[role="dialog"]')].filter(visible);
+      return all.filter(e => !all.some(other => other !== e && e.contains(other)));
+    };
+    const loading = element => Boolean(element && (element.matches('[aria-busy="true"],.ant-spin-spinning,.ant-btn-loading') || [...element.querySelectorAll('[aria-busy="true"],.ant-spin-spinning,.ant-btn-loading')].some(visible)));
+    function answerCard(state, required = false) {
+      const lists = [...document.querySelectorAll('#survey_page .answer_info_card .sheet_list')];
+      if (!lists.length) return required ? '无法读取平台答题卡，不能确认作答状态。' : '';
+      if (lists.length !== 1) return '平台答题卡结构不唯一，请人工核对。';
+      const entries = [...lists[0].children];
+      const ids = entries.map(e => e.querySelector('a')?.id);
+      if (entries.length !== state.total || new Set(ids).size !== state.total ||
+          state.questions.some(q => !ids.includes('#' + q.question?.id.replace(/^question_/, '')))) return '平台答题卡尚未完整同步。';
+      const unfinished = entries.filter(e => e.title !== '已答题' || !e.classList.contains('finish'));
+      return unfinished.length ? `平台答题卡尚未确认已答：第 ${unfinished.map(e => e.querySelector('a')?.textContent.trim()).join('、')} 题。` : '';
+    }
+    function answerValues() {
+      // Used only within this page operation; never sent to the worker or stored.
+      return JSON.stringify(nodes().map(node => controls(node, dom.extract(node).question).map(e => ['radio', 'checkbox'].includes(e.type) ? e.checked : e.value)));
+    }
+    async function stablePaper(message) {
+      let previous = null, reason = '';
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await authorize(message, 'submit');
+        const state = inspect(message.task);
+        if (!state.complete || state.fingerprint !== message.fingerprint || state.questions.some(q => q.state !== 'done')) return '提交前题目或答案已变化，请核对整卷。';
+        reason = answerCard(state, true) || (loading(document.querySelector('#survey_page')) ? '平台仍在同步作答状态。' : '');
+        const values = answerValues();
+        if (!reason && previous === values) return '';
+        previous = reason ? null : values;
+        if (attempt < 11) await delay(250);
+      }
+      return reason || '答案状态未稳定，请人工核对。';
+    }
+    function confirmationState() {
+      const dialogs = activeDialogs();
+      if (!dialogs.length) return { kind: 'none' };
+      if (dialogs.length !== 1) return { kind: 'blocked', reason: '存在多个弹窗，无法确定交卷确认窗口。' };
+      const modal = dialogs[0], text = compactText(modal);
+      if (isSuccessDialog(modal)) return { kind: 'none' };
+      if (loading(modal)) return { kind: 'loading', modal, reason: '提交检查窗口仍在加载。' };
+      const lists = [...modal.querySelectorAll('.NoAnswerModal_container .no_answer_sheet_list')];
+      const special = modal.matches('.NoAnswerModal') && lists.length === 1 &&
+        compactText(modal.querySelector('.ant-modal-title') || modal) === '提交' &&
+        compactText(modal.querySelector('.sub_caption') || modal) === '未完成的题目：';
+      if (special) {
+        const list = lists[0];
+        if (list.children.length || compactText(list)) {
+          const numbers = [...list.querySelectorAll('a')].map(e => compactText(e)).filter(v => /^\d+$/.test(v));
+          return { kind: 'blocked', reason: numbers.length ? `平台提示未完成：第 ${[...new Set(numbers)].join('、')} 题，请核对答案。` : '平台提示有未完成题目，但无法可靠读取题号，请查看弹窗。' };
+        }
+        // Match the observed empty-list dialog, not any text containing “提交”.
+        const tip = modal.querySelector('.tip');
+        if (!tip || text !== '提交未完成的题目：*可在屏幕右侧答题卡内查看各试题的作答状态提交取消') return { kind: 'blocked', reason: '提交检查窗口结构已变化，请人工核对。' };
+      } else if (!/提交|交卷/.test(text) || /成功|失败|未答|漏答|未完成|空题|未作答/.test(text)) {
+        return { kind: 'blocked', reason: /未答|漏答|未完成|空题|未作答/.test(text) ? '平台提示存在未完成题目，请核对弹窗与答题卡。' : '遇到无法识别的提交弹窗，请人工处理。' };
+      }
+      const buttons = [...modal.querySelectorAll('button')].filter(e => visible(e) && !e.disabled && /^(确定|确认|提交|确定提交|确认提交|交卷)$/.test(compactText(e)));
+      if (buttons.length !== 1) return { kind: 'blocked', reason: '提交确认按钮不可用或不唯一，请人工处理。' };
+      return { kind: 'ready', modal, button: buttons[0], special };
+    }
     function entryFallback() {
       if (!entryAttempted || entryFallbackUsed || !location.pathname.includes('/resource/')) return null;
       const dialogs = [...document.querySelectorAll('.ant-modal,.ant-modal-confirm,[role="dialog"]')].filter(visible);
@@ -185,6 +246,9 @@
         const state = inspect(message.task);
         if (state.questions.some(item => item.question?.type === 'attachment')) throw Error('含附件题的任务仅保留草稿，不自动提交。');
         if (state.submitted || !state.complete || state.fingerprint !== message.fingerprint || state.questions.some(q => q.state !== 'done')) throw Error('提交前整卷核对未通过。');
+        const unsettled = await stablePaper(message);
+        if (unsettled) return { ok: true, blocked: true, reason: unsettled };
+        if (activeDialogs().length) return { ok: true, blocked: true, reason: '页面已有弹窗，请先人工核对，未再次点击交卷。' };
         const buttons = nativeButtons().filter(e => e.type === 'submit' && !e.disabled && /^(提交|提交作业|交卷|补交)$/.test(compactText(e)));
         if (buttons.length !== 1) throw Error('不能唯一确定真实交卷按钮。');
         // A pre-existing success dialog must never become this attempt's receipt.
@@ -193,20 +257,24 @@
       }
       if (message.action === 'confirm') {
         if (!submittedHere) return { ok: true };
-        const modals = [...document.querySelectorAll('.ant-modal,.ant-modal-confirm,[role="dialog"]')].filter(visible);
-        const candidates = modals.filter(e => /提交|交卷/.test(compactText(e)) && !/成功|失败|未答|漏答|未完成|空题|未作答/.test(compactText(e)));
-        if (!candidates.length) return { ok: true };
-        const innermost = candidates.filter(e => !candidates.some(other => other !== e && e.contains(other)));
-        if (innermost.length !== 1) return { ok: true };
-        const modal = innermost[0];
-        const isConfirmation = e => visible(e) && !e.disabled && /^(确定|确认|提交|确定提交|确认提交|交卷)$/.test(compactText(e));
-        const buttons = [...modal.querySelectorAll('button')].filter(isConfirmation);
-        if (buttons.length !== 1) return { ok: true };
-        await authorize(message, 'confirm');
-        const current = inspect(message.task);
-        if (!current.complete || current.fingerprint !== submittedFingerprint || current.questions.some(q => q.state !== 'done')) throw Error('交卷确认前题目或答案已变化，请人工核对。');
-        if (!modal.isConnected || !buttons[0].isConnected || !isConfirmation(buttons[0]) || !visible(modal) || /成功|失败|未答|漏答|未完成|空题|未作答/.test(compactText(modal)) || !/提交|交卷/.test(compactText(modal))) throw Error('交卷确认窗口已变化，请人工核对。');
-        submittedHere = false; buttons[0].click(); return { ok: true };
+        let previous = null;
+        for (let attempt = 0; attempt < 12; attempt++) {
+          await authorize(message, 'confirm');
+          const candidate = confirmationState();
+          if (candidate.kind === 'none') return { ok: true };
+          if (candidate.kind === 'blocked') return { ok: true, blocked: true, reason: candidate.reason };
+          const current = inspect(message.task);
+          if (!current.complete || current.fingerprint !== submittedFingerprint || current.questions.some(q => q.state !== 'done')) throw Error('交卷确认前题目或答案已变化，请人工核对。');
+          const reason = candidate.kind === 'loading' ? candidate.reason : answerCard(current, true);
+          const values = answerValues();
+          if (!reason && previous?.modal === candidate.modal && previous?.button === candidate.button && previous?.values === values) {
+            // No awaits between the final fresh checks and this single click.
+            submittedHere = false; candidate.button.click(); return { ok: true };
+          }
+          previous = reason ? null : { modal: candidate.modal, button: candidate.button, values };
+          if (attempt === 11) return { ok: true, blocked: true, reason: reason || '提交确认窗口或答案持续变化，请人工核对。' };
+          await delay(250);
+        }
       }
       throw Error('未知作答指令。');
     }

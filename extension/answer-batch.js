@@ -57,8 +57,8 @@
     }
     async function stage(run, value, message) { guard(run); state.stage = value; state.message = message; await save(); guard(run); }
     async function resolveSubmission(run, task) {
-      let submitted = false;
-      try { submitted = await driver.verify(task); } catch {}
+      let submitted = false, problem = '';
+      try { submitted = await driver.verify(task); } catch (error) { problem = error.message || '核对提交时发生异常。'; }
       if (job !== run) return false;
       state.inFlight = false;
       if (submitted) {
@@ -67,8 +67,8 @@
         if (!current(run)) { state.enabled = false; state.stage = 'stopped'; state.message = '已停止；在途提交已核对成功。'; }
         await save(); return true;
       }
-      state.enabled = false; state.inFlight = true; state.stage = 'uncertain'; state.message = '提交结果不明，批次已暂停。请在平台核对后点击“核对提交结果”，不会自动重交。';
-      state.results[state.index] = { status: 'uncertain', message: '提交结果待核对', at: now() }; await save(); return false;
+      state.enabled = false; state.inFlight = true; state.stage = 'uncertain'; state.message = problem ? `批次已暂停：${problem} 请在原页面处理后核对提交结果，不会自动重交。` : '提交结果不明，批次已暂停。请在平台核对后点击“核对提交结果”，不会自动重交。';
+      state.results[state.index] = { status: 'uncertain', message: problem || '提交结果待核对', at: now() }; await save(); return false;
     }
     async function execute(run) {
       try {
@@ -113,7 +113,15 @@
             }
             await stage(run, 'submitting', `正在提交：${task.name}`);
             state.inFlight = true; await save(); guard(run);
-            try { await driver.submit(task, filled.fingerprint, run.controller.signal); } catch { /* A lost acknowledgement is not permission to retry. */ }
+            try {
+              const result = await driver.submit(task, filled.fingerprint, run.controller.signal);
+              if (result?.blocked) {
+                state.inFlight = false; state.enabled = false; state.stage = 'paused';
+                state.message = `提交前检查未通过，批次已暂停：${result.reason}`;
+                state.results[state.index] = { status: 'pending', message: result.reason, at: now() };
+                await save(); return;
+              }
+            } catch { /* A lost acknowledgement is not permission to retry. */ }
             if (job !== run) return;
             if (!await resolveSubmission(run, task)) return;
           } catch (error) {
