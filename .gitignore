@@ -1,3 +1,13 @@
 # 安装包通过 GitHub Releases 分发，不提交到源码仓库。
 *.zip
 dist/
+
+node_modules/
+
+# Local configuration and diagnostics are not source artifacts.
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+/private-evidence/

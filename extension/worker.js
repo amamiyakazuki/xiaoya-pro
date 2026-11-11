@@ -1,5 +1,7 @@
 'use strict';
 if (typeof importScripts === 'function') importScripts('task-data.js');
+if (typeof importScripts === 'function') importScripts('ai-question.js', 'ai-client.js', 'ai-service.js');
+const aiService = globalThis.XiaoyaAIService?.createService();
 chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 const KEY = 'xiaoyaRun';
 chrome.alarms.create('xiaoya-tick', { periodInMinutes: 0.5 });
@@ -108,6 +110,12 @@ async function handle(message, sender) {
     }
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (typeof message?.type === 'string' && message.type.startsWith('ai:')) {
+    // AI requests must not occupy the video queue's serialized command chain.
+    if (aiService) aiService.handle(message, sender).then(reply);
+    else reply({ ok: false, error: 'AI 模块尚未加载，请重新加载扩展。' });
+    return true;
+  }
   if (!['get', 'start', 'scan', 'login-ready', 'save', 'stop'].includes(message?.type)) return;
   commands = commands.then(() => handle(message, sender)).then(reply, async error => {
     const failure = { text: error.message, tabId: message.tabId ?? sender.tab?.id, at: Date.now() };

@@ -154,4 +154,21 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 #gear { position: relative; }
 #gear.running::after { content: ""; position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
 
+.ai-form { display: grid; gap: 7px; padding: 12px; }
+.ai-form label { font-weight: 500; }
+.ai-form input { min-width: 0; width: 100%; border: 1px solid var(--faint-2); border-radius: 9px; padding: 8px 10px; background: rgba(255,255,255,.8); }
+.ai-form input::placeholder { color: var(--muted); font-size: 12px; }
+.ai-form input:disabled { opacity: .65; }
+.ai-form .note { padding: 0; }
+.ai-target { display: grid; gap: 3px; padding: 7px 9px; background: var(--faint); border-radius: 9px; font-size: 11.5px; color: var(--muted); }
+.ai-target output { overflow-wrap: anywhere; color: var(--ink); }
+.ai-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 3px; }
+.ai-actions button { padding: 7px 10px; border-radius: 9px; background: var(--faint); color: var(--accent); }
+#aiSave { background: var(--accent); color: white; }
+#aiDelete { margin-left: auto; color: var(--muted); }
+.ai-actions button:disabled { opacity: .55; cursor: default; }
+.ai-status { margin: 0; font-size: 12px; overflow-wrap: anywhere; color: var(--muted); }
+.ai-status[data-tone="error"] { color: var(--urgent); }
+.ai-status[data-tone="success"] { color: var(--ok); }
+
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

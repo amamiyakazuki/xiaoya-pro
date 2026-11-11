@@ -60,8 +60,10 @@ function workerForPanel({ sidePanel } = {}) {
     sidePanel,
     tabs: { onUpdated: { addListener(fn) { updated = fn; } }, onRemoved: { addListener() {} } }
   } });
-  context.importScripts = name => {
-    assert.equal(name, 'task-data.js');
+  context.importScripts = (...names) => {
+    if (names[0] === 'answer-batch.js') return;
+    if (names[0] === 'ai-question.js') { assert.deepEqual(names, ['ai-question.js', 'ai-client.js', 'ai-service.js']); return; }
+    assert.equal(names[0], 'task-data.js');
     context.XiaoyaTaskData = { createTaskStore: () => ({ rememberCourses: async list => { remembered.push(...list); } }) };
   };
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../extension/worker.js'), 'utf8'), context);

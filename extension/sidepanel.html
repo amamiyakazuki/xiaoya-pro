@@ -34,6 +34,23 @@
     <section class="sheet" id="sheet" aria-label="设置">
       <div class="sheet-head"><h3>设置</h3><button class="icon" id="closeSheet" aria-label="关闭设置"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
       <div class="sheet-body">
+        <section class="sect" id="aiSettings" aria-labelledby="aiHeading">
+          <span id="aiHeading">AI API</span>
+          <div class="group ai-form">
+            <label for="aiAddress">API 地址</label>
+            <input id="aiAddress" type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" aria-describedby="aiAddressHelp aiEndpoint">
+            <p class="note" id="aiAddressHelp">支持 Chat Completions 兼容服务的基础地址或完整请求地址。</p>
+            <div class="ai-target"><span>实际请求地址</span><output id="aiEndpoint">填写地址后显示实际请求地址</output></div>
+            <label for="aiKey">API 密钥</label>
+            <input id="aiKey" type="password" placeholder="填写自己的 API 密钥" autocomplete="off" spellcheck="false" aria-describedby="aiKeyHelp">
+            <p class="note" id="aiKeyHelp">仅保存在当前浏览器。已保存密钥不回显；更换请求地址需重新填写。</p>
+            <label for="aiModel">模型</label>
+            <input id="aiModel" type="text" placeholder="填写服务商提供的模型名称" autocomplete="off" spellcheck="false">
+            <div class="ai-actions"><button id="aiSave" type="button">保存配置</button><button id="aiTest" type="button">测试连接</button><button id="aiCancel" type="button" hidden>取消测试</button><button id="aiDelete" type="button">删除配置</button></div>
+            <p id="aiStatus" class="ai-status" role="status" aria-live="polite"></p>
+          </div>
+          <p class="note">测试只发送固定样题，不读取作业；服务商可能收取少量费用。首次保存或测试会请求访问所填 API 域名。删除配置不撤销浏览器已授予的域名权限。</p>
+        </section>
         <div class="sect"><span>默认排列</span><div class="seg" id="view"></div></div>
         <div class="sect"><span>学习设置</span>
           <div class="group">
@@ -59,5 +76,7 @@
   <script src="panel-model.js"></script>
   <script src="sidepanel.js"></script>
   <script src="panel-queue.js"></script>
+  <script src="ai-client.js"></script>
+  <script src="panel-ai.js"></script>
 </body>
 </html>
