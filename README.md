@@ -1,14 +1,14 @@
 # xiaoya-pro
 
-小雅 Pro 的私有开发仓库，目前实现为 Chrome / Microsoft Edge 扩展，提供任务面板、视频与课件队列、个人 AI API 配置、题旁答案和整份任务自动作答提交。扩展内仍显示“小雅刷课助手”，manifest 版本仍为 0.4.0，本仓库尚未发布新版安装包。
+小雅 Pro 的私有开发仓库，目前实现为 Chrome / Microsoft Edge 扩展，提供任务面板、视频与课件队列、个人 AI API 配置、题旁答案和整份任务自动作答提交。当前版本为 **0.5.0**，浏览器中显示为“小雅刷课助手”。
 
-基于 [xiaoze123kk/xiaoya-course-helper](https://github.com/xiaoze123kk/xiaoya-course-helper)，完整保留原 Git 历史，迁移基线为 `8548a4c`。后续脚本、桌面版与独立移动端仅处于规划阶段，见 [当前计划](P_PLAN/PLAN.md) 和 [多端路线讨论](P_PLAN/多端版本可行性与路线.md)。
+项目完整保留原 Git 历史，迁移基线为 `8548a4c`。脚本、桌面版与独立移动端的规划见源码仓库的 `P_PLAN/`。本版改动见 [更新记录](CHANGELOG.md)。项目基于 [xiaoze123kk/xiaoya-course-helper](https://github.com/xiaoze123kk/xiaoya-course-helper)。
 
 适用地址：<https://whut.ai-augmented.com/app/jx-web/mycourse>。需要 **Chrome 或 Microsoft Edge 120 及以上版本**。
 
 ## 下载与安装
 
-1. 从 [本仓库](https://github.com/amamiyakazuki/xiaoya-pro) 下载源码或克隆到固定目录（需要仓库访问权限）。
+1. 从 [GitHub Release](https://github.com/amamiyakazuki/xiaoya-pro/releases/tag/v0.5.0) 下载对应浏览器的 ZIP，解压到固定目录。也可以下载本仓库源码。下载需要仓库访问权限。
 2. 打开浏览器扩展管理页：Chrome 输入 `chrome://extensions/`，Edge 输入 `edge://extensions/`，开启“开发者模式”。
 3. 点击“加载未打包的扩展程序”，选择源码里的 **`extension` 文件夹**，不要选择 ZIP 或仓库根目录。
 4. 将“小雅刷课助手”固定到工具栏，点击图标打开侧边栏。
@@ -112,9 +112,9 @@ B1 已通过本地模拟整批验证；用户真实 Chrome 试用已出现平台
 
 ## 更新
 
-从本仓库更新源码后，在 Chrome 的 `chrome://extensions/` 或 Edge 的 `edge://extensions/` 找到“小雅刷课助手”，点击“重新加载”，再重开侧栏。已有页面需刷新或重新打开才能使用新版内容脚本；先结束当前批次并保存草稿，不要在作业执行中更新。
+先结束当前批次并保存自己的草稿，再将新版的 `extension` 文件夹更新到浏览器原来加载的路径。在 Chrome 的 `chrome://extensions/` 或 Edge 的 `edge://extensions/` 找到“小雅刷课助手”，点击“重新加载”，再重开侧栏。需要使用新版浮标时，等当前作业编辑或提交结束后再刷新或重新打开该页面。
 
-当前尚未发布新版 Release；源码不保存历史 ZIP。后续正式版本和安装包发布另行安排。
+0.5.0 安装包见 [GitHub Release](https://github.com/amamiyakazuki/xiaoya-pro/releases/tag/v0.5.0)。源码仓库不保存 ZIP。
 
 ## 隐私与权限
 
@@ -146,7 +146,7 @@ A1 另覆盖 API 地址解析、域名授权、密钥隔离、错误分类、取
 ./scripts/package.ps1 -Browser all
 ```
 
-输出在 `dist/`，该目录和 ZIP 均不提交 Git。打包只复制同一份 `extension/`，分别附加浏览器安装指引，不维护重复业务代码。
+输出在 `dist/`，该目录和 ZIP 均不提交 Git。两个安装包使用同一份 `extension/` 和更新记录，分别附加对应浏览器的安装指引。
 
 A2 使用 `node --test tests/*.test.cjs` 运行回归；`tests/fixtures/answer-float.html` 为本地模拟页面，不是真实服务验收。可从仓库根目录启动仅监听回环地址的 HTTP 静态服务后打开该页面。
 

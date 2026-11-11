@@ -20,6 +20,7 @@ foreach ($target in $targets) {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'extension') -Destination $staging -Recurse
     Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $staging
     Copy-Item -LiteralPath (Join-Path $projectRoot '使用说明.txt') -Destination $staging
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'CHANGELOG.md') -Destination $staging
     $browserName = if ($target -eq 'edge') { 'Microsoft Edge' } else { 'Google Chrome' }
     $managementUrl = if ($target -eq 'edge') { 'edge://extensions/' } else { 'chrome://extensions/' }
     $instructions = @"
@@ -32,13 +33,13 @@ foreach ($target in $targets) {
 5. 固定插件图标，点击图标打开侧边栏查看任务。需要开着一个已登录的小雅标签页。
 6. 在小雅首页打开侧边栏的设置页，点击“开始队列”；保持该小雅页打开，即可使用其他网页。
 
-Chrome 与 Edge 使用同一套源码，待办、倍速、计时、后台及自动切换功能一致。
+Chrome 与 Edge 使用同一套源码和权限。
 两个浏览器的登录和扩展存储独立；请在本浏览器单独登录，不要同时运行同一账号的两个队列。
-后台有效计时以平台为准；真实平台完整流程仍需实测。详细步骤见 README.md。
+后台有效计时以平台为准。详细步骤见 README.md，本版改动见 CHANGELOG.md。
 "@
     Set-Content -LiteralPath (Join-Path $staging "安装-$target.txt") -Value $instructions -Encoding utf8
     $filename = if ($target -eq 'edge') { "xiaoya-course-helper-edge-v$($manifest.version).zip" } else { "xiaoya-course-helper-v$($manifest.version).zip" }
     $destination = Join-Path $OutputDirectory $filename
-    Compress-Archive -LiteralPath @((Join-Path $staging 'extension'), (Join-Path $staging 'README.md'), (Join-Path $staging '使用说明.txt'), (Join-Path $staging "安装-$target.txt")) -DestinationPath $destination -Force
+    Compress-Archive -LiteralPath @((Join-Path $staging 'extension'), (Join-Path $staging 'README.md'), (Join-Path $staging '使用说明.txt'), (Join-Path $staging 'CHANGELOG.md'), (Join-Path $staging "安装-$target.txt")) -DestinationPath $destination -Force
     [pscustomobject]@{ Browser = $browserName; Version = $manifest.version; Package = (Get-Item -LiteralPath $destination).FullName }
 }
