@@ -88,6 +88,17 @@ test('storage access failure is closed and never echoes the underlying error', a
   assert.ok(!JSON.stringify(result).includes(config.key));
   assert.equal(f.data[KEY], undefined);
 });
+test('batch query exposes only classified errors to the saved task result', async () => {
+  const f = fixture();
+  await f.send('save');
+  f.api.permissions.contains = async () => { throw Error(config.key); };
+  await assert.rejects(f.service.querySaved({}, new AbortController().signal), error => {
+    assert.equal(error.code, 'unknown');
+    assert.ok(!error.message.includes(config.key));
+    return true;
+  });
+  assert.equal(f.calls.length, 0);
+});
 test('permission denial prevents both persistence and requests', async () => {
   const f = fixture({ permitted: false });
   assert.equal((await f.send('save')).code, 'permission');

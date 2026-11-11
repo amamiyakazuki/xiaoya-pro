@@ -18,9 +18,22 @@
       return tab;
     }
     async function send(task, action, extra = {}) {
-      await target(task);
-      const response = await api.tabs.sendMessage(tabId, { type: 'auto:page', batchId: getBatchId(), task, pageToken, action, ...extra }, { frameId: 0 });
-      if (!response?.ok) throw Object.assign(Error(response?.error || '作业页面没有确认操作。'), { submissionBlocked: action === 'confirm' });
+      try { await target(task); }
+      catch (error) {
+        if (action === 'submit' && error.fatal) return { ok: true, blocked: true, reason: error.message };
+        throw error;
+      }
+      let response;
+      try { response = await api.tabs.sendMessage(tabId, { type: 'auto:page', batchId: getBatchId(), task, pageToken, action, ...extra }, { frameId: 0 }); }
+      catch (error) {
+        if (action === 'fill') throw fatal('填写时与执行页断开，批次已暂停。请检查原页已有答案。');
+        throw error;
+      }
+      if (!response?.ok) {
+        const reason = response?.error || '作业页面没有确认操作。';
+        if (action === 'fill' && response?.fillBeforeWrite !== true) throw fatal(`${reason} 批次已暂停，请核对原页已有答案。`);
+        throw Object.assign(Error(reason), { submissionBlocked: action === 'confirm' });
+      }
       return response;
     }
     async function inspect(task) {
@@ -91,9 +104,29 @@
       // A fresh server result still works when the old tab shows a stale processing state.
       return verifySubmitted ? await verifySubmitted(task) : false;
     }
+    async function focusDraft(task, reference, verifyBatch) {
+      const { tabId, pageToken } = reference;
+      const missing = '原答题页已关闭、重载或离开，请从小雅课程手动核对。';
+      if (!Number.isInteger(tabId) || typeof pageToken !== 'string' || !pageToken) throw Error(missing);
+      async function locate() {
+        const tab = await api.tabs.get(tabId).catch(() => null);
+        if (!tab || !matches(tab.url, task) || (tab.pendingUrl && tab.pendingUrl !== tab.url)) throw Error(missing);
+        const response = await api.tabs.sendMessage(tabId, { type: 'auto:page', task, action: 'locate-draft', pageToken }, { frameId: 0 }).catch(() => null);
+        if (!response?.ok || response.pageToken !== pageToken) throw Error(missing);
+        return tab;
+      }
+      await locate();
+      if (!await verifyBatch()) return false;
+      const tab = await locate();
+      await api.tabs.update(tabId, { active: true });
+      if (Number.isInteger(tab.windowId)) await api.windows.update(tab.windowId, { focused: true });
+      return true;
+    }
     return { open, enter, inspect, verify,
       fill: (task, item) => send(task, 'fill', { item }),
       submit: (task, fingerprint) => send(task, 'submit', { fingerprint }),
+      draftReference: () => Number.isInteger(tabId) && pageToken ? { tabId, pageToken } : null,
+      focusDraft,
       halt() { stopped = true; if (tabId !== null) api.tabs.sendMessage(tabId, { type: 'auto:page', action: 'halt' }, { frameId: 0 }).catch(() => {}); },
       async recheck(task) {
         stopped = true;

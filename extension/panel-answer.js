@@ -1,10 +1,11 @@
 'use strict';
 (function () {
   const batchModel = globalThis.XiaoyaAnswerBatch;
-  let selected = new Set(), selectionAccount = state.account, batch = null, starting = false, confirmed = null, lastEnded = null;
+  let selected = new Set(), selectionAccount = state.account, batch = null, starting = false, confirmed = null, lastEnded = null, openingDraft = null;
   const chosen = () => state.tasks.filter(task => selected.has(task.id) && batchModel.eligible(task));
   const visible = () => model.visibleTasks(state.tasks, filters(), Date.now()).filter(batchModel.eligible);
   const locked = () => starting || Boolean(batch?.enabled || batch?.inFlight);
+  const draftLocked = () => starting || Boolean(batch?.enabled) || openingDraft !== null;
   async function send(type, extra = {}) {
     const reply = await chrome.runtime.sendMessage({ type: `auto:${type}`, ...extra });
     if (!reply?.ok) throw Error(reply?.error || '后台未响应，请重新加载扩展。');
@@ -32,7 +33,10 @@
       $('answerResults').innerHTML = batch.tasks.map((task, index) => {
         const result = batch.results[index];
         const label = ({ waiting: '等待', done: '已提交', draft: '待补附件', pending: '待处理', uncertain: '待核对' })[result.status] || '等待';
-        return `<li><strong>${esc(task.courseName)} · ${esc(task.name)}</strong><span>${label}：${esc(result.message)}</span></li>`;
+        const draftButton = result.status === 'draft' && result.draftPage
+          ? `<button type="button" data-draft-index="${index}" ${draftLocked() ? 'disabled' : ''}>${openingDraft === index ? '正在核对原页面…' : '返回原答题页'}</button>`
+          : result.status === 'draft' ? '<span>原页面无法定位，请在小雅课程中手动核对草稿。</span>' : '';
+        return `<li><strong>${esc(task.courseName)} · ${esc(task.name)}</strong><span>${label}：${esc(result.message)}</span>${draftButton}</li>`;
       }).join('');
     }
     document.querySelectorAll('[data-answer-id]').forEach(input => { input.checked = selected.has(input.dataset.answerId); input.disabled = locked(); });
@@ -75,6 +79,25 @@
     try { const result = await send('verify'); $('answerMessage').textContent = result.confirmed ? '平台已确认提交成功。' : '平台最新状态尚未确认完成。请稍后再次核对；不会重新提交。'; await read(); }
     catch (error) { $('answerMessage').textContent = error.message; }
     finally { $('answerVerify').disabled = false; $('answerVerify').textContent = '核对提交结果'; }
+  });
+  $('answerResults').addEventListener('click', async event => {
+    const button = event.target.closest('[data-draft-index]');
+    if (!button || draftLocked() || !batch) return;
+    const index = Number(button.dataset.draftIndex);
+    const task = batch.tasks[index], result = batch.results[index], batchId = batch.id;
+    if (!task || result?.status !== 'draft' || !result.draftPage) return;
+    openingDraft = index;
+    $('answerMessage').textContent = '正在核对原答题页和账号…';
+    render();
+    try {
+      await send('open-draft', { batchId, taskId: task.id });
+      $('answerMessage').textContent = '已返回原答题页，请核对草稿并补齐附件。';
+    } catch (error) {
+      $('answerMessage').textContent = error.message;
+    } finally {
+      openingDraft = null;
+      render();
+    }
   });
   async function read() { try { batch = (await send('get')).batch; render(); } catch (error) { $('answerMessage').textContent = error.message; } }
   chrome.storage.onChanged.addListener((changes, area) => {

@@ -1,21 +1,103 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>本地模拟作业</title><link rel="icon" href="data:,">
-<style>body{font:14px/1.6 system-ui;padding:15px;background:#fff;color:#243d52}.question{padding:12px;border:1px solid #d6e5f0;margin-bottom:12px;border-radius:8px}label{display:block}textarea{width:90%;height:45px}button{padding:8px 20px}.xy-modal-warp{position:fixed;inset:25% 15%;background:#eef7ff;border:2px solid #276eae;padding:30px;box-shadow:0 0 0 100vh #0004}</style>
-<div id="survey_page"><h2>模拟作业 · 原生控件</h2><span class="score_sub_title">共3题（100分）</span><form id="question_content">
-<div class="question"><div class="exam_question_stem"><div class="stem_title">一加一等于几？</div><span class="score">[单选题 20 分]</span></div><div id="question_101" class="question_single_subject">
-<label class="ant-radio-wrapper"><input type="radio" name="q1" value="1011"><span class="exam_answer_item_sequence">A.</span><span class="xy_rich_text_base">2</span></label>
-<label class="ant-radio-wrapper"><input type="radio" name="q1" value="1012"><span class="exam_answer_item_sequence">B.</span><span class="xy_rich_text_base">3</span></label></div></div>
-<div class="question"><div class="exam_question_stem"><div class="stem_title">哪些是偶数？</div><span class="score">[多选题 30 分]</span></div><div id="question_102" class="question_multiple_subject">
-<label class="ant-checkbox-wrapper"><input type="checkbox" value="1021"><span class="exam_answer_item_sequence">A.</span><span class="xy_rich_text_base">2</span></label>
-<label class="ant-checkbox-wrapper"><input type="checkbox" value="1022"><span class="exam_answer_item_sequence">B.</span><span class="xy_rich_text_base">3</span></label>
-<label class="ant-checkbox-wrapper"><input type="checkbox" value="1023"><span class="exam_answer_item_sequence">C.</span><span class="xy_rich_text_base">4</span></label></div></div>
-<div class="question"><div class="exam_question_stem"><div class="stem_title">一加一等于 <span class="xy_richtext_blank_number_warp">(1) ____</span>，二加二等于 <span class="xy_richtext_blank_number_warp">(2) ____</span>。</div><span class="score">[填空题 50 分]</span></div><div id="question_103" class="question_gap_subject"><div class="_label">填空1:</div><textarea>人工答案 2</textarea><div class="_label">填空2:</div><textarea></textarea></div></div>
-<button type="submit">提交</button></form></div>
-<script>
-if(new URLSearchParams(location.search).get('task')==='2'){
- document.querySelector('.score_sub_title').textContent='共1题（100分）';document.getElementById('question_content').innerHTML='<div class="question"><div class="exam_question_stem"><div class="stem_title">上传实验报告</div><span class="score">[附件题 100 分]</span></div><div id="question_201" class="question_attach_subject"><input type="file"></div></div><button type="submit">提交</button>';
-}
-const card=document.createElement('div');card.className='answer_info_card';document.querySelector('#survey_page').append(card);
-function syncCard(){card.innerHTML='<ul class="sheet_list">'+[...document.querySelectorAll('[id^="question_"]')].filter(e=>/^question_\d+$/.test(e.id)).map((e,i)=>{const fields=[...e.querySelectorAll('input,textarea')];const done=fields[0]?.type==='radio'||fields[0]?.type==='checkbox'?fields.some(f=>f.checked):fields.length>0&&fields.every(f=>f.type!=='file'&&f.value.trim());return `<li title="${done?'已答题':'未答题'}" class="${done?'finish':''}"><a id="#${e.id.slice(9)}">${i+1}</a></li>`;}).join('')+'</ul>';}
-document.addEventListener('input',syncCard);document.addEventListener('change',syncCard);syncCard();
-document.querySelector('form').addEventListener('submit',e=>{e.preventDefault();const modal=document.createElement('div');modal.className='xy-modal-warp';modal.setAttribute('role','dialog');modal.innerHTML='<h3>提交作业/测练</h3><p>是否确定提交？</p><button type="button"><span>提 交</span></button><button type="button"><span>取 消</span></button>';document.body.append(modal);modal.querySelector('button').onclick=()=>{const button=document.querySelector('button[type=submit]');button.disabled=true;button.textContent='已提交';modal.remove();};});
-</script></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>本地模拟作业</title>
+  <link rel="icon" href="data:,">
+  <style>
+    body { margin: 0; padding: 15px; color: #243d52; background: #fff; font: 14px/1.6 system-ui, sans-serif; }
+    .question { margin-bottom: 12px; padding: 12px; border: 1px solid #d6e5f0; border-radius: 8px; }
+    label { display: block; }
+    textarea { width: 90%; height: 45px; }
+    button { padding: 8px 20px; }
+    .xy-modal-warp { position: fixed; inset: 25% 15%; padding: 30px; border: 2px solid #276eae; background: #eef7ff; box-shadow: 0 0 0 100vh #0004; }
+  </style>
+</head>
+<body>
+  <div id="survey_page">
+    <h2>模拟作业 · 原生控件</h2>
+    <span class="score_sub_title">共3题（100分）</span>
+    <form id="question_content">
+      <div class="question">
+        <div class="exam_question_stem"><div class="stem_title">一加一等于几？</div><span class="score">[单选题 20 分]</span></div>
+        <div id="question_101" class="question_single_subject">
+          <label class="ant-radio-wrapper"><input type="radio" name="q1" value="1011"><span class="exam_answer_item_sequence">A.</span><span class="xy_rich_text_base">2</span></label>
+          <label class="ant-radio-wrapper"><input type="radio" name="q1" value="1012"><span class="exam_answer_item_sequence">B.</span><span class="xy_rich_text_base">3</span></label>
+        </div>
+      </div>
+      <div class="question">
+        <div class="exam_question_stem"><div class="stem_title">哪些是偶数？</div><span class="score">[多选题 30 分]</span></div>
+        <div id="question_102" class="question_multiple_subject">
+          <label class="ant-checkbox-wrapper"><input type="checkbox" value="1021"><span class="exam_answer_item_sequence">A.</span><span class="xy_rich_text_base">2</span></label>
+          <label class="ant-checkbox-wrapper"><input type="checkbox" value="1022"><span class="exam_answer_item_sequence">B.</span><span class="xy_rich_text_base">3</span></label>
+          <label class="ant-checkbox-wrapper"><input type="checkbox" value="1023"><span class="exam_answer_item_sequence">C.</span><span class="xy_rich_text_base">4</span></label>
+        </div>
+      </div>
+      <div class="question">
+        <div class="exam_question_stem"><div class="stem_title">一加一等于 <span class="xy_richtext_blank_number_warp">(1) ____</span>，二加二等于 <span class="xy_richtext_blank_number_warp">(2) ____</span>。</div><span class="score">[填空题 50 分]</span></div>
+        <div id="question_103" class="question_gap_subject">
+          <div class="_label">填空1:</div><textarea>人工答案 2</textarea>
+          <div class="_label">填空2:</div><textarea></textarea>
+        </div>
+      </div>
+      <button type="submit">提交</button>
+    </form>
+  </div>
+  <script>
+    const taskId = "__FIXTURE_TASK_ID__";
+    if (taskId === '3') {
+      document.querySelector('.score_sub_title').textContent = '共2题（100分）';
+      document.getElementById('question_content').innerHTML = `
+        <div class="question">
+          <div class="exam_question_stem"><div class="stem_title">二加二等于几？</div><span class="score">[单选题 50 分]</span></div>
+          <div id="question_301" class="question_single_subject">
+            <label class="ant-radio-wrapper"><input type="radio" name="q3" value="3011"><span class="exam_answer_item_sequence">A.</span><span class="xy_rich_text_base">4</span></label>
+            <label class="ant-radio-wrapper"><input type="radio" name="q3" value="3012"><span class="exam_answer_item_sequence">B.</span><span class="xy_rich_text_base">5</span></label>
+          </div>
+        </div>
+        <div class="question">
+          <div class="exam_question_stem"><div class="stem_title">上传实验报告</div><span class="score">[附件题 50 分]</span></div>
+          <div id="question_302" class="question_attach_subject"><input type="file"></div>
+        </div>
+        <button type="submit">提交</button>`;
+    }
+
+    const answerCard = document.createElement('div');
+    answerCard.className = 'answer_info_card';
+    document.querySelector('#survey_page').append(answerCard);
+
+    function syncAnswerCard() {
+      const questions = [...document.querySelectorAll('[id^="question_"]')]
+        .filter(element => /^question_\d+$/.test(element.id));
+      const rows = questions.map((element, index) => {
+        const fields = [...element.querySelectorAll('input, textarea')];
+        const isChoice = fields[0]?.type === 'radio' || fields[0]?.type === 'checkbox';
+        const answered = isChoice
+          ? fields.some(field => field.checked)
+          : fields.length > 0 && fields.every(field => field.type !== 'file' && field.value.trim());
+        return `<li title="${answered ? '已答题' : '未答题'}" class="${answered ? 'finish' : ''}"><a id="#${element.id.slice(9)}">${index + 1}</a></li>`;
+      });
+      answerCard.innerHTML = `<ul class="sheet_list">${rows.join('')}</ul>`;
+    }
+
+    document.addEventListener('input', syncAnswerCard);
+    document.addEventListener('change', syncAnswerCard);
+    syncAnswerCard();
+
+    document.querySelector('form').addEventListener('submit', event => {
+      event.preventDefault();
+      const modal = document.createElement('div');
+      modal.className = 'xy-modal-warp';
+      modal.setAttribute('role', 'dialog');
+      modal.innerHTML = '<h3>提交作业/测练</h3><p>是否确定提交？</p><button type="button"><span>提 交</span></button><button type="button"><span>取 消</span></button>';
+      document.body.append(modal);
+      modal.querySelector('button').onclick = () => {
+        const submit = document.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        submit.textContent = '已提交';
+        modal.remove();
+      };
+    });
+  </script>
+</body>
+</html>

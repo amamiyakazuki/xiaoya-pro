@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>B1 一键作答 · 本地模拟</title>
 <link rel="stylesheet" href="../../extension/sidepanel.css">
-<link rel="icon" href="data:,"><style>.panel{width:380px;flex:none}.mock{padding:20px;flex:1;min-width:0}body{display:flex}#mockPaper{width:100%;height:80vh;border:1px solid #c3d9eb;border-radius:10px}#mockStats{font-size:14px;margin:10px 0}</style></head>
+<link rel="icon" href="data:,"><style>.panel{width:380px;flex:none}.mock{padding:20px;flex:1;min-width:0}body{display:flex}.mock-controls{display:flex;align-items:center;gap:8px;margin:14px 0}.mock-controls label{font-weight:600}.mock-controls button,.mock-controls select{padding:7px 10px;border:1px solid #c3d9eb;border-radius:7px;background:white;color:#243d52}.mock-note{color:#63788b;font-size:13px}#mockPaper{width:100%;height:80vh;border:1px solid #c3d9eb;border-radius:10px}#mockStats{font-size:14px;margin:10px 0;padding:10px;border-radius:8px;background:#f1f7fc;color:#243d52}</style></head>
 <body>
   <main class="panel" aria-label="任务面板">
     <header class="head">
@@ -84,7 +84,18 @@
       </div>
     </section>
   </main>
-  <section class="mock"><h2>B1 完整流程模拟验收</h2><p>仅本地样题，不调用真实 API，也不提交真实作业。</p><div id="mockStats"></div><iframe id="mockPaper" title="模拟作业"></iframe></section>
+  <section class="mock" aria-labelledby="mockHeading">
+    <h2 id="mockHeading">本地批次模拟</h2>
+    <p>只使用固定样题和模拟服务，不连接小雅或真实 AI。</p>
+    <div class="mock-controls">
+      <label for="mockAccount">模拟账号</label>
+      <select id="mockAccount"><option value="A">账号 A</option><option value="B">账号 B</option></select>
+      <button id="mockReload" type="button">重开侧栏</button>
+    </div>
+    <p class="mock-note">切换账号会刷新任务并清空未开始的选择。重载只保留本标签页的模拟状态。</p>
+    <p id="mockStats" aria-live="polite"></p>
+    <iframe id="mockPaper" title="模拟作业"></iframe>
+  </section>
   <script src="../../extension/task-data.js"></script><script src="batch-mock.js"></script>
   <script src="../../extension/ai-question.js"></script>
   <script src="../../extension/answer-dom.js"></script>

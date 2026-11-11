@@ -6,6 +6,7 @@ require('../extension/answer-dom.js');
 const B = require('../extension/answer-batch.js');
 const {createAdapter} = require('../extension/answer-page.js');
 const {createDriver} = require('../extension/answer-driver.js');
+const {AIError} = require('../extension/ai-client.js');
 const task = (n = 1) => ({id:`t${n}`, courseId:'11', nodeId:String(n), typeCode:2, name:`任务${n}`,courseName:'模拟课程', finished:false});
 const pause = () => new Promise(r=>setImmediate(r));
 async function settled(engine) {for(let i=0;i<100 && engine.busy();i++)await pause(); assert.equal(engine.busy(),false); return engine.get();}
@@ -30,6 +31,7 @@ test('only stable whole-task identities are selectable; hidden selections persis
   const tasks=[task(),task(2),{...task(3),finished:true},{...task(4),typeCode:1},{...task(5),nodeId:null}];
   assert.deepEqual(B.selection(tasks,['t1','t2','t3','t4','t5'],'a','a'),['t1','t2']);
   assert.deepEqual(B.selection(tasks,['t1'],'b','a'),[]);
+  assert.deepEqual([1,2,3,4,5].filter(typeCode=>B.eligible({...task(),typeCode})),[2,3,4]);
   assert.equal(B.matches('https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/11/1/3/4',B.canonical(task())),true);
   assert.equal(B.matches('https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/11/2/3/4',B.canonical(task())),false);
 });
@@ -42,7 +44,19 @@ test('confirmed subset completes query → fill → submit → receipt, never op
 test('all answers are collected before any write, and one AI failure skips the whole task',async()=>{
  let count=0;const f=fixture({query:async()=>{if(++count===2)throw Error('模拟服务失败');return {solution:{kind:'text',text:'2'}};}});
  const original=f.driver.open;f.driver.open=async t=>{const s=await original(t);s.questions.push({...s.questions[0],question:{...q,id:'question_124'}});return s;};
- await f.start();const state=await settled(f.engine);assert.equal(state.results[0].status,'pending');assert.ok(!f.calls.some(c=>c[0]==='fill'||c[0]==='submit'));
+ await f.start();const state=await settled(f.engine);assert.equal(state.results[0].status,'pending');assert.equal(state.results[0].message,'第 2 题：模拟服务失败');assert.ok(!f.calls.some(c=>c[0]==='fill'||c[0]==='submit'));
+});
+test('AI failure results preserve the page question number and distinguish timeout, rate and format errors',async()=>{
+ for(const code of ['timeout','rate','answer',null]) {
+  const error=code && new AIError(code);
+  const f=fixture({query:async()=>{if(error)throw error;return {};}});
+  const open=f.driver.open;
+  f.driver.open=async t=>{const s=await open(t);s.questions[0].number=code?7:undefined;s.questions[0].numberSource=code?'page':'order';return s;};
+  await f.start();const state=await settled(f.engine);
+  assert.equal(state.results[0].status,'pending');
+  assert.equal(state.results[0].message, error ? `第 7 题：${error.message}` : '第 1 题（页面顺序）：AI 未返回可填写的结构化答案。');
+  assert.ok(!f.calls.some(c=>['fill','submit'].includes(c[0])));
+ }
 });
 test('unsupported task is pending and next selected task still executes',async()=>{
  const f=fixture();const original=f.driver.open;f.driver.open=async t=>t.id==='t1'?{complete:true,questions:[{state:'unknown'}]}:original(t);
@@ -74,6 +88,106 @@ test('stop after submit still verifies the in-flight operation without starting 
 test('worker restart pauses persisted running state and preserves uncertain submissions',async()=>{
  for(const inFlight of [false,true]){const f=fixture({data:{[B.KEY]:{id:'old',enabled:true,inFlight,tasks:[B.canonical(task())],index:0,results:[],account:'account'}}});const state=await f.engine.get();assert.equal(state.enabled,false);assert.equal(state.stage,inFlight?'uncertain':'paused');assert.equal(f.calls.length,0);}
 });
+test('stopping before the submit request was dispatched clears the lock without polling a receipt',async()=>{
+ const entered=deferred(), resume=deferred();
+ const storage={async get(){return {};},async set(values){
+  const state=values[B.KEY];
+  if(state.enabled && state.inFlight){entered.resolve();await resume.promise;}
+ }};
+ const f=fixture({storage});
+ await f.start([task(),task(2)]);
+ await entered.promise;
+ const stop=f.engine.stop();
+ resume.resolve();
+ await stop;
+ const state=await settled(f.engine);
+ assert.equal(state.stage,'stopped');
+ assert.equal(state.inFlight,false);
+ assert.match(state.results[0].message,/指令发出前/);
+ assert.ok(!f.calls.some(c=>['submit','verify'].includes(c[0])||c[1]==='t2'));
+});
+test('a lost submit reply and a fresh unfinished status keep the original task locked',async()=>{
+ let clicks=0;
+ const f=fixture({driver:{async submit(){clicks++;throw Error('lost submit reply');},async verify(){return false;},async recheck(){return false;}}});
+ await f.start([task(),task(2)]);
+ const state=await settled(f.engine);
+ assert.equal(state.stage,'uncertain');
+ assert.equal(state.inFlight,true);
+ assert.deepEqual(await f.engine.verify(),{ok:true,confirmed:false});
+ await assert.rejects(f.start([task(2)]),/待核对/);
+ assert.equal(clicks,1);
+ assert.ok(!f.calls.some(c=>c[1]==='t2'));
+});
+test('stopping or restoring a batch during filling marks the current task for draft review',async()=>{
+ const entered=deferred(), resume=deferred();
+ const f=fixture({driver:{async fill(){entered.resolve();await resume.promise;}}});
+ await f.start([task(),task(2)]);
+ await entered.promise;
+ const recovered=fixture({data:f.data});
+ const restored=await recovered.engine.get();
+ assert.equal(restored.stage,'paused');
+ assert.equal(restored.results[0].status,'pending');
+ assert.match(restored.results[0].message,/部分答案/);
+ assert.equal(recovered.calls.length,0);
+ await f.engine.stop();
+ resume.resolve();
+ const stopped=await settled(f.engine);
+ assert.equal(stopped.stage,'stopped');
+ assert.deepEqual(stopped.results.map(r=>r.status),['pending','waiting']);
+ assert.match(stopped.results[0].message,/原答题页/);
+ assert.ok(!f.calls.some(c=>c[0]==='submit'||c[1]==='t2'));
+});
+test('lost connection while filling pauses the batch for draft review',async()=>{
+ const base=B.canonical(task());
+ const api={tabs:{async create(){return {id:1};},async get(){return {id:1,url:base.url};},async sendMessage(id,message){
+  if(message.action==='fill')throw Error('lost channel');
+  return {ok:true,snapshot:{pageToken:'page',complete:true,fingerprint:'paper',questions:[{question:q,state:'empty',writable:true,fingerprint:'q'}]}};
+ }}};
+ const driver=createDriver({chrome:api,getBatchId:()=> 'batch'});
+ const f=fixture({driver});
+ await f.start([task(),task(2)]);
+ const stopped=await settled(f.engine);
+ assert.equal(stopped.stage,'paused');
+ assert.match(stopped.message,/与执行页断开/);
+ assert.deepEqual(stopped.results.map(r=>r.status),['pending','waiting']);
+});
+test('a failed fill only continues the batch when the page explicitly confirms no write was attempted',async()=>{
+ for (const fillBeforeWrite of [true,false,undefined]) {
+  let opened=0,url,filled=false,submitted=false;
+  const api={tabs:{async create(tab){opened++;url=tab.url;return {id:1};},async get(){return {id:1,url};},async sendMessage(id,message){
+   if(message.action==='fill') {
+    if(opened===1)return {ok:false,error:'控件状态变化。',fillBeforeWrite};
+    filled=true;
+   }
+   if(message.action==='submit')submitted=true;
+   return {ok:true,snapshot:{pageToken:'page',complete:true,fingerprint:'paper',submitted,questions:[{question:q,state:filled?'done':'empty',writable:true,fingerprint:'q'}]}};
+  }}};
+  const driver=createDriver({chrome:api,getBatchId:()=> 'batch'});
+  const f=fixture({driver});
+  await f.start([task(),task(2)]);
+  const result=await settled(f.engine);
+  assert.equal(opened,fillBeforeWrite?2:1);
+  assert.equal(result.stage,fillBeforeWrite?'finished':'paused');
+  assert.deepEqual(result.results.map(r=>r.status),fillBeforeWrite?['pending','done']:['pending','waiting']);
+  assert.match(fillBeforeWrite?result.results[0].message:result.message,/控件状态变化/);
+ }
+});
+test('a later question failure pauses the batch if the previous question was already written',async()=>{
+ let writes=0;
+ const f=fixture({driver:{async fill(){
+  if(++writes===2)throw Error('下一题控件在写入前变化。');
+  return {filled:true};
+ }}});
+ const paper=()=>{const snapshot=f.snapshot();snapshot.questions.push({...snapshot.questions[0],question:{...q,id:'question_124'}});return snapshot;};
+ f.driver.open=async t=>{f.calls.push(['open',t.id]);return paper();};
+ f.driver.inspect=async()=>paper();
+ await f.start([task(),task(2)]);
+ const result=await settled(f.engine);
+ assert.equal(result.stage,'paused');
+ assert.match(result.results[0].message,/部分答案/);
+ assert.equal(result.results[1].status,'waiting');
+ assert.deepEqual(f.calls.filter(c=>c[0]==='open'),[['open','t1']]);
+});
 test('video queue and duplicate task identity reject before any page action',async()=>{
  const f=fixture({videoActive:async()=>true});await assert.rejects(f.start(),/视频/);assert.equal(f.calls.length,0);
  const g=fixture();await assert.rejects(g.start([task(),{...task(),id:'duplicate'}]),/重复/);
@@ -93,15 +207,104 @@ test('DOM adapter fills blanks in order, preserves partial manual draft, and nev
  assert.deepEqual([...p.document.querySelectorAll('textarea')].map(e=>e.value),['人工保留','4']);assert.equal((await p.command('inspect')).snapshot.questions[0].state,'done');
 });
 test('incomplete paper and stale document token cannot submit',async()=>{
- const p=page({total:2});assert.equal((await p.command('inspect')).snapshot.complete,false);await assert.rejects(p.command('submit',{fingerprint:'x'}),/核对/);await assert.rejects(p.command('fill',{pageToken:'old'}),/旧指令/);
+ const p=page({total:2});assert.equal((await p.command('inspect')).snapshot.complete,false);
+ assert.match((await p.command('submit',{fingerprint:'x'})).reason,/核对/);
+ assert.match((await p.command('submit',{pageToken:'old'})).reason,/旧交卷指令/);
+ await assert.rejects(p.command('fill',{pageToken:'old'}),/旧指令/);
+});
+test('incomplete and duplicate papers show the reason in the batch without querying or filling', async () => {
+ const p=page({total:2});
+ const f=fixture();
+ f.driver.open=async ()=>(await p.command('inspect')).snapshot;
+ await f.start();
+ let state=await settled(f.engine);
+ assert.match(state.results[0].message,/当前页面读取到 1 题，卷面共 2 题/);
+ const question=p.document.querySelector('.question');
+ question.after(question.cloneNode(true));
+ await f.start();
+ state=await settled(f.engine);
+ assert.match(state.results[0].message,/重复题目/);
+ assert.ok(!f.calls.some(c=>['query','fill','submit'].includes(c[0])));
+});
+test('stopping between two blanks keeps the written blank and a newly confirmed batch fills only the rest', async () => {
+ const entered=deferred(), resume=deferred();
+ let paused=false;
+ const p=page({delay:async ms=>{if(ms===100&&!paused){paused=true;entered.resolve();await resume.promise;}}});
+ const s=(await p.command('inspect')).snapshot;
+ const item={id:q.id,fingerprint:s.questions[0].fingerprint,solution:{kind:'fill',values:['已写入','未写入']}};
+ const fill=p.command('fill',{item});
+ await entered.promise;
+ await p.command('halt');
+ resume.resolve();
+ await assert.rejects(fill,error=>/已停止/.test(error.message)&&error.fillBeforeWrite===false);
+ assert.deepEqual([...p.document.querySelectorAll('textarea')].map(e=>e.value),['已写入','']);
+ await p.command('fill',{batchId:'confirmed-next',item:{...item,solution:{kind:'fill',values:['不得覆盖','补齐']}}});
+ assert.deepEqual([...p.document.querySelectorAll('textarea')].map(e=>e.value),['已写入','补齐']);
 });
 test('revoked authorization stops native input writes',async()=>{
- const p=page({permit:async()=>false});const s=(await p.command('inspect')).snapshot;await assert.rejects(p.command('fill',{item:{id:q.id,fingerprint:s.questions[0].fingerprint,solution:{kind:'fill',values:['2','4']}}}),/未获/);assert.equal(p.document.querySelector('textarea').value,'');
+ const p=page({permit:async()=>false});const s=(await p.command('inspect')).snapshot;await assert.rejects(p.command('fill',{item:{id:q.id,fingerprint:s.questions[0].fingerprint,solution:{kind:'fill',values:['2','4']}}}),error=>/未获/.test(error.message)&&error.fillBeforeWrite===true);assert.equal(p.document.querySelector('textarea').value,'');
 });
 test('DOM native submit is only accepted after whole-paper readback; submitting is not submitted',async()=>{
  const p=page();const s=(await p.command('inspect')).snapshot;await p.command('fill',{item:{id:q.id,fingerprint:s.questions[0].fingerprint,solution:{kind:'fill',values:['2','4']}}});
  let count=0;const button=p.document.querySelector('button');button.addEventListener('click',()=>count++);await p.command('submit',{fingerprint:s.fingerprint});assert.equal(count,1);
  button.disabled=true;button.textContent='提交中';assert.equal((await p.command('inspect')).snapshot.submitted,false);button.textContent='已提交';assert.equal((await p.command('inspect')).snapshot.submitted,true);
+});
+test('a known pre-click failure reports blocked without clicking any candidate',async()=>{
+ let allowed=true;
+ const p=await preparedPage({permit:async()=>allowed});
+ const button=p.document.querySelector('button[type=submit]');
+ const duplicate=button.cloneNode(true);
+ button.after(duplicate);
+ let clicks=0;
+ for(const candidate of [button,duplicate])candidate.addEventListener('click',()=>clicks++);
+ const result=await p.command('submit',{fingerprint:p.fingerprint});
+ assert.equal(result.blocked,true);
+ assert.match(result.reason,/不能唯一确定/);
+ allowed=false;
+ const denied=await p.command('submit',{fingerprint:p.fingerprint});
+ assert.equal(denied.blocked,true);
+ assert.match(denied.reason,/未获/);
+ assert.equal(clicks,0);
+});
+test('late submission only clicks the unique enabled platform button',async()=>{
+ const p=await preparedPage();
+ const button=p.document.querySelector('button[type=submit]');
+ button.textContent='补交';
+ button.disabled=true;
+ let clicks=0;
+ button.addEventListener('click',()=>clicks++);
+ const unavailable=await p.command('submit',{fingerprint:p.fingerprint});
+ assert.equal(unavailable.blocked,true);
+ assert.equal(clicks,0);
+ button.disabled=false;
+ const available=await p.command('submit',{fingerprint:p.fingerprint});
+ assert.equal(available.ok,true);
+ assert.equal(clicks,1);
+});
+test('draft focus checks the original tab and document again before switching windows',async()=>{
+ const p=page();
+ const base=B.canonical(task());
+ const calls=[];
+ let tab={id:1,windowId:9,url:base.url}, reloaded=false;
+ const api={tabs:{async create(){return {id:1};},async get(){return tab;},async sendMessage(id,message){
+  assert.equal(id,1);
+  if(reloaded)message={...message,pageToken:'new-page'};
+  return p.adapter.command(message);
+ },async update(id,settings){calls.push(['tab',id,settings]);}},windows:{async update(id,settings){calls.push(['window',id,settings]);}}};
+ const driver=createDriver({chrome:api,getBatchId:()=> 'batch'});
+ await driver.open(base,new AbortController().signal);
+ const reference=driver.draftReference();
+ assert.deepEqual(reference,{tabId:1,pageToken:'page'});
+ await assert.rejects(driver.focusDraft(base,reference,async()=>{reloaded=true;return true;}),/原答题页/);
+ assert.deepEqual(calls,[]);
+ reloaded=false;
+ await assert.rejects(driver.focusDraft(base,reference,async()=>{throw Error('账号已变化');}),/账号/);
+ assert.equal(await driver.focusDraft(base,reference,async()=>false),false);
+ assert.deepEqual(calls,[]);
+ await driver.focusDraft(base,reference,async()=>{calls.push(['verify']);return true;});
+ assert.deepEqual(calls,[['verify'],['tab',1,{active:true}],['window',9,{focused:true}]]);
+ tab={...tab,url:B.canonical(task(2)).url};
+ await assert.rejects(driver.focusDraft(base,reference,async()=>{}),/原答题页/);
 });
 test('driver only follows a matching child of its dedicated tab and validates permit sender',async()=>{
  let created,clock=0;let childFn;const tabs=new Map();let n=0;const base=B.canonical(task());const api={tabs:{onCreated:{addListener(fn){childFn=fn;}},async create(o){created=o;tabs.set(1,{id:1,url:o.url});return tabs.get(1);},async get(id){return tabs.get(id);},async sendMessage(id,m){if(m.action==='inspect')return {ok:true,snapshot:{pageToken:`p${id}`,pageKind:id===3?'paper':'resource',canEnter:id===1,complete:id===3}};if(m.action==='enter'){childFn({id:2,openerTabId:1});tabs.set(2,{id:2,url:'https://evil.test'});childFn({id:3,openerTabId:1});tabs.set(3,{id:3,url:'https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/11/1/3/4'});}return {ok:true};}}};
@@ -345,14 +548,16 @@ test('attachment task fills only other blanks, retains partial manual answers an
  f.driver.open=async t=>{active=t.id;return active==='t1'?(await p.command('inspect')).snapshot:original.open(t);};
  f.driver.inspect=async()=>active==='t1'?(await p.command('inspect')).snapshot:original.inspect();
  f.driver.fill=async(t,item)=>active==='t1'?p.command('fill',{item}):original.fill(t,item);
+ f.driver.draftReference=()=>({tabId:12,pageToken:'original-attachment-paper'});
  await f.start([task(),task(2)]);const state=await settled(f.engine);
  assert.deepEqual(state.results.map(r=>r.status),['draft','done']);assert.equal(state.inFlight,false);
+ assert.deepEqual(state.results[0].draftPage,{tabId:12,pageToken:'original-attachment-paper'});
  assert.match(state.results[0].message,/第 2 题/);assert.match(state.results[0].message,/其余 1 题已答/);assert.match(state.results[0].message,/未提交/);
  assert.deepEqual([...p.document.querySelectorAll('textarea')].map(e=>e.value),['人工首空','补齐第二空']);assert.equal(attachment.outerHTML,originalAttachment);
  assert.ok(queries.every(question=>question.type!=='attachment'));assert.equal(f.calls.filter(c=>c[0]==='submit').length,1);assert.equal(f.calls.find(c=>c[0]==='submit')[1],'t2');
  for(const privateText of ['人工首空','补齐第二空','existing.py','附件题干不要发送'])assert.ok(!JSON.stringify(f.data).includes(privateText));
  const snapshot=(await p.command('inspect')).snapshot;
- await assert.rejects(p.command('submit',{fingerprint:snapshot.fingerprint}),/含附件题.*不自动提交/);
+ assert.match((await p.command('submit',{fingerprint:snapshot.fingerprint})).reason,/含附件题.*不自动提交/);
 });
 test('all-attachment and already-answered mixed tasks never query, fill or submit',async()=>{
  for(const mixed of [false,true]) {

@@ -152,13 +152,26 @@
         .filter(value => Number.isSafeInteger(value) && value > 0))];
       const total = totals.length === 1 ? totals[0] : 0;
       const items = nodes().map(inspectQuestion);
-      const complete = total > 0 && total === items.length && items.every(q => q.question) && new Set(items.map(q => q.question?.id)).size === items.length;
+      const questionIds = items.map(q => q.question?.id).filter(Boolean);
+      const duplicateIds = new Set(questionIds).size !== questionIds.length;
+      const complete = total > 0 && total === items.length && questionIds.length === items.length && !duplicateIds;
       const entry = document.querySelector('.entry_task_btn');
       const begin = [...document.querySelectorAll('#survey_page button,#survey_page .xy_link_click')].find(e => visible(e) && /^(立即开始答题|开始答题)$/.test(e.textContent.trim()) && !e.disabled);
+      let reason = '';
+      if (!page) reason = '作业页面尚未加载。';
+      else if (totals.length > 1) reason = '卷面总题数信息不一致，请核对页面。';
+      else if (!total) reason = '无法读取卷面总题数。';
+      else if (!complete) {
+        const details = ['试卷题目未完整读取，整份未提交。'];
+        if (total !== items.length) details.push(`当前页面读取到 ${items.length} 题，卷面共 ${total} 题。请检查是否还在加载或需要切页。`);
+        if (duplicateIds) details.push('页面出现重复题目，请人工核对整卷。');
+        const problems = batch.questionProblems(items);
+        if (problems) details.push(problems);
+        reason = details.join('\n');
+      }
       return { pageToken, url: location.href, pageKind: location.pathname.includes('/course_paper/') ? 'paper' : 'resource',
         canEnterCurrent: Boolean(entryFallback()), submitted, submissionSucceeded: receiptArmed && receiptTaskId === task.id && successDialogs().length === 1, complete, total, questions: items, fingerprint: JSON.stringify(items.map(q => q.fingerprint)),
-        canEnter: location.pathname.includes('/resource/') && visible(entry), canBegin: Boolean(begin),
-        reason: !page ? '作业页面尚未加载。' : totals.length > 1 ? '卷面总题数信息不一致，请核对页面。' : !total ? '无法读取卷面总题数。' : !complete ? `试卷题目未完整读取，整份未提交。${batch.questionProblems(items) ? `\n${batch.questionProblems(items)}` : '\n可能存在分页、重复题目或未适配结构。'}` : '' };
+        canEnter: location.pathname.includes('/resource/') && visible(entry), canBegin: Boolean(begin), reason };
     }
     async function authorize(message, action) {
       if (batchId !== message.batchId) { batchId = message.batchId; halted = false; submittedHere = false; receiptArmed = false; receiptTaskId = null; entryAttempted = false; entryFallbackUsed = false; }
@@ -166,7 +179,7 @@
       const allowed = await permit({ batchId, taskId: message.task.id, action, pageToken });
       if (!allowed || halted || !batch.matches(location.href, message.task)) throw Error('当前操作未获本批授权或已停止。');
     }
-    async function fill(message) {
+    async function fill(message, noteWrite) {
       const item = message.item;
       const node = nodes().find(node => subjectFor(node)?.id === item.id);
       if (!node) throw Error('找不到对应题目。');
@@ -188,7 +201,7 @@
           // Check fields not written by us to preserve changes made during awaits.
           if (fields.some((e, j) => e.checked && !expected.has(j))) throw Error('填写过程中出现人工选项，已停止该份提交。');
           if (!fields[i].isConnected || fields[i].disabled) throw Error('选项已改变。');
-          fields[i].click(); expected.set(i, true); await delay(80);
+          noteWrite(); fields[i].click(); expected.set(i, true); await delay(80);
         }
         if (fields.some((e, i) => e.checked !== expected.has(i))) throw Error('选项填写后回读不一致。');
       } else {
@@ -202,7 +215,7 @@
           const prototype = field.tagName === 'TEXTAREA' ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
           const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
           if (!setter) throw Error('无法使用原生输入控件。');
-          setter.call(field, values[i]);
+          noteWrite(); setter.call(field, values[i]);
           field.dispatchEvent(new view.Event('input', { bubbles: true })); field.dispatchEvent(new view.Event('change', { bubbles: true })); field.blur();
           expected.set(i, values[i]); await delay(100);
           if (field.value !== values[i]) throw Error('输入内容未被页面保留。');
@@ -215,8 +228,12 @@
       return { filled: true };
     }
     async function command(message) {
+      const blockedBeforeClick = reason => ({ ok: true, blocked: true, reason });
       if (message.action === 'halt') { halted = true; return { ok: true }; }
-      if (!batch.matches(location.href, message.task)) throw Error('页面不属于已确认任务。');
+      if (!batch.matches(location.href, message.task)) {
+        if (message.action === 'submit') return blockedBeforeClick('页面不属于已确认任务。');
+        throw Error('页面不属于已确认任务。');
+      }
       if (message.action === 'inspect') {
         // Expanding the answer sheet changes no answers or task participation.
         const toggle = document.querySelector('#survey_page .anticon-left-circle[title="展开"]');
@@ -225,7 +242,11 @@
         if (message.batchId !== batchId) snapshot.submissionSucceeded = false;
         return { ok: true, snapshot };
       }
-      if (message.pageToken !== pageToken) throw Error('页面已重新加载，旧指令已失效。');
+      if (message.pageToken !== pageToken) {
+        if (message.action === 'submit') return blockedBeforeClick('页面已重新加载，旧交卷指令已失效。');
+        throw Error('页面已重新加载，旧指令已失效。');
+      }
+      if (message.action === 'locate-draft') return { ok: true, pageToken };
       if (message.action === 'enter') {
         await authorize(message, 'enter');
         const state = inspect(message.task);
@@ -240,20 +261,28 @@
         // Mark before clicking: losing the navigation reply must never repeat the action.
         entryFallbackUsed = true; button.click(); return { ok: true };
       }
-      if (message.action === 'fill') return { ok: true, ...await fill(message) };
+      if (message.action === 'fill') {
+        let writeAttempted = false;
+        try { return { ok: true, ...await fill(message, () => { writeAttempted = true; }) }; }
+        catch (error) { throw Object.assign(Error(error?.message || '填写未完成。'), { fillBeforeWrite: !writeAttempted }); }
+      }
       if (message.action === 'submit') {
-        await authorize(message, 'submit');
-        const state = inspect(message.task);
-        if (state.questions.some(item => item.question?.type === 'attachment')) throw Error('含附件题的任务仅保留草稿，不自动提交。');
-        if (state.submitted || !state.complete || state.fingerprint !== message.fingerprint || state.questions.some(q => q.state !== 'done')) throw Error('提交前整卷核对未通过。');
-        const unsettled = await stablePaper(message);
-        if (unsettled) return { ok: true, blocked: true, reason: unsettled };
-        if (activeDialogs().length) return { ok: true, blocked: true, reason: '页面已有弹窗，请先人工核对，未再次点击交卷。' };
-        const buttons = nativeButtons().filter(e => e.type === 'submit' && !e.disabled && /^(提交|提交作业|交卷|补交)$/.test(compactText(e)));
-        if (buttons.length !== 1) throw Error('不能唯一确定真实交卷按钮。');
+        let button;
+        try {
+          await authorize(message, 'submit');
+          const state = inspect(message.task);
+          if (state.questions.some(item => item.question?.type === 'attachment')) return blockedBeforeClick('含附件题的任务仅保留草稿，不自动提交。');
+          if (state.submitted || !state.complete || state.fingerprint !== message.fingerprint || state.questions.some(q => q.state !== 'done')) return blockedBeforeClick('提交前整卷核对未通过。');
+          const unsettled = await stablePaper(message);
+          if (unsettled) return blockedBeforeClick(unsettled);
+          if (activeDialogs().length) return blockedBeforeClick('页面已有弹窗，请先人工核对，未再次点击交卷。');
+          const buttons = nativeButtons().filter(e => e.type === 'submit' && !e.disabled && /^(提交|提交作业|交卷|补交)$/.test(compactText(e)));
+          if (buttons.length !== 1) return blockedBeforeClick('不能唯一确定真实交卷按钮。');
+          button = buttons[0];
+        } catch (error) { return blockedBeforeClick(error?.message || '提交前检查未能完成。'); }
         // A pre-existing success dialog must never become this attempt's receipt.
         receiptArmed = successDialogs().length === 0; receiptTaskId = message.task.id;
-        submittedHere = true; submittedFingerprint = state.fingerprint; buttons[0].click(); return { ok: true };
+        submittedHere = true; submittedFingerprint = message.fingerprint; button.click(); return { ok: true };
       }
       if (message.action === 'confirm') {
         if (!submittedHere) return { ok: true };
@@ -287,6 +316,6 @@
   const adapter = createAdapter({ document, location, permit: async message => (await chrome.runtime.sendMessage({ type: 'auto:permit', ...message }))?.allowed === true });
   chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message?.type !== 'auto:page' || sender.id !== chrome.runtime.id || sender.tab) return;
-    adapter.command(message).then(reply, error => reply({ ok: false, error: error.message })); return true;
+    adapter.command(message).then(reply, error => reply({ ok: false, error: error.message, fillBeforeWrite: error.fillBeforeWrite === true })); return true;
   });
 })(globalThis);

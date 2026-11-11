@@ -109,6 +109,7 @@
         if (signal?.aborted) throw new AIError('cancelled');
         signal?.addEventListener('abort', abort, { once: true });
         try { return (await test({ requestId, question }, sender, true)).result; }
+        catch (error) { throw new AIError(client.failure(error).code); }
         finally { signal?.removeEventListener('abort', abort); }
       }
     };

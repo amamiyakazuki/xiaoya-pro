@@ -25,11 +25,14 @@
     if (account !== previousAccount) return [];
     return [...new Set(selected)].filter(key => tasks.some(task => task.id === key && eligible(task)));
   }
+  function questionLabel(item, index) {
+    const number = Number.isSafeInteger(item.number) && item.number > 0 ? item.number : index + 1;
+    return `第 ${number} 题${item.numberSource === 'order' ? '（页面顺序）' : ''}`;
+  }
   function questionProblems(questions) {
     return questions.map((item, index) => {
       if (item.state !== 'unknown' && (item.state === 'done' || item.writable)) return '';
-      const number = Number.isSafeInteger(item.number) && item.number > 0 ? item.number : index + 1;
-      return `第 ${number} 题${item.numberSource === 'order' ? '（页面顺序）' : ''}（${item.typeName || '题型未识别'}）：${item.reason || '无法确认作答状态或填写方式'}`;
+      return `${questionLabel(item, index)}（${item.typeName || '题型未识别'}）：${item.reason || '无法确认作答状态或填写方式'}`;
     }).filter(Boolean).join('\n');
   }
   function createEngine({ storage, driver, getAccount, query, aiReady = async () => true, videoActive = async () => false, now = Date.now, uuid = () => crypto.randomUUID() }) {
@@ -39,9 +42,14 @@
       const result = writes.then(() => storage.set({ [KEY]: snapshot }));
       writes = result.catch(() => {}); return result;
     };
+    function noteInterruptedFill() {
+      if (state.stage !== 'filling' || state.results?.[state.index]?.status !== 'waiting') return;
+      state.results[state.index] = { status: 'pending', message: '填写已中断，可能已写入部分答案。请在原答题页核对。', at: now() };
+    }
     const ready = (async () => {
       state = (await storage.get(KEY))[KEY] || null;
       if (state?.enabled) {
+        noteInterruptedFill();
         state.enabled = false;
         state.stage = state.inFlight ? 'uncertain' : 'paused';
         state.message = state.inFlight ? '后台中断，提交结果待核对；不会自动重交。' : '后台中断，批次已暂停；请重新核对清单后开始。';
@@ -56,6 +64,15 @@
       catch (error) { error.fatal = true; throw error; }
     }
     async function stage(run, value, message) { guard(run); state.stage = value; state.message = message; await save(); guard(run); }
+    async function blockBeforeSubmit(run, reason) {
+      const stopped = !current(run);
+      state.inFlight = false;
+      state.enabled = false;
+      state.stage = stopped ? 'stopped' : 'paused';
+      state.message = stopped ? '已停止，未点击交卷。' : `提交前检查未通过，批次已暂停：${reason}`;
+      state.results[state.index] = { status: 'pending', message: reason, at: now() };
+      await save();
+    }
     async function resolveSubmission(run, task) {
       let submitted = false, problem = '';
       try { submitted = await driver.verify(task); } catch (error) { problem = error.message || '核对提交时发生异常。'; }
@@ -74,6 +91,7 @@
       try {
         while (current(run) && state.index < state.tasks.length) {
           const task = state.tasks[state.index];
+          let mayHaveWritten = false;
           try {
             await identity(run);
             await stage(run, 'opening', `正在打开：${task.name}`);
@@ -91,43 +109,51 @@
             const solutions = [];
             for (const [index, item] of snapshot.questions.entries()) {
               if (item.state === 'done' || attachments.has(item.question?.id)) continue;
-              await stage(run, 'querying', `正在查询第 ${item.number || index + 1} 题：${task.name}`);
-              const answer = await query(item.question, run.controller.signal); guard(run);
-              if (!answer?.solution) throw Error('AI 未返回可填写的结构化答案。');
+              const label = questionLabel(item, index);
+              await stage(run, 'querying', `正在查询${label}：${task.name}`);
+              let answer;
+              try { answer = await query(item.question, run.controller.signal); }
+              catch (error) { throw Error(`${label}：${error?.message || 'AI 查询失败，请手动核对。'}`); }
+              guard(run);
+              if (!answer?.solution) throw Error(`${label}：AI 未返回可填写的结构化答案。`);
               solutions.push({ id: item.question.id, fingerprint: item.fingerprint, solution: answer.solution });
             }
             await identity(run);
             await stage(run, 'filling', `正在补齐空题：${task.name}`);
             const latest = await driver.inspect(task); guard(run);
             if (!latest.complete || latest.fingerprint !== snapshot.fingerprint) throw Error('题目或选项发生变化，整份未提交。');
-            for (const solution of solutions) { guard(run); await driver.fill(task, solution, run.controller.signal); guard(run); }
+            for (const solution of solutions) {
+              guard(run);
+              const result = await driver.fill(task, solution, run.controller.signal);
+              mayHaveWritten ||= !result?.preserved;
+              guard(run);
+            }
             const filled = await driver.inspect(task); guard(run);
             if (!filled.complete || filled.fingerprint !== snapshot.fingerprint || filled.questions.some(q => !attachments.has(q.question?.id) && q.state !== 'done')) throw Error('填写后未确认应答题目全部已答，整份未提交；请在原答题页核对草稿。');
             await identity(run);
             if (attachments.size) {
-              const skipped = snapshot.questions.map((item, index) => attachments.has(item.question?.id) ? `第 ${item.number || index + 1} 题${item.numberSource === 'order' ? '（页面顺序）' : ''}` : '').filter(Boolean).join('、');
+              const skipped = snapshot.questions.map((item, index) => attachments.has(item.question?.id) ? questionLabel(item, index) : '').filter(Boolean).join('、');
               const answered = filled.questions.length - attachments.size;
-              state.results[state.index++] = { status: 'draft', message: `已跳过附件题：${skipped}。\n${answered ? `页面已确认其余 ${answered} 题已答，已有答案保留。` : '本份仅含附件题，未填写。'}\n未提交；请在原答题页核对草稿并补齐附件。`, at: now() };
+              state.results[state.index++] = { status: 'draft', message: `已跳过附件题：${skipped}。\n${answered ? `页面已确认其余 ${answered} 题已答，已有答案保留。` : '本份仅含附件题，未填写。'}\n未提交；请在原答题页核对草稿并补齐附件。`, draftPage: driver.draftReference?.() || null, at: now() };
               await save();
               continue;
             }
             await stage(run, 'submitting', `正在提交：${task.name}`);
-            state.inFlight = true; await save(); guard(run);
+            state.inFlight = true; await save();
+            if (!current(run)) { await blockBeforeSubmit(run, '提交指令发出前已停止。'); return; }
+            let result;
             try {
-              const result = await driver.submit(task, filled.fingerprint, run.controller.signal);
-              if (result?.blocked) {
-                state.inFlight = false; state.enabled = false; state.stage = 'paused';
-                state.message = `提交前检查未通过，批次已暂停：${result.reason}`;
-                state.results[state.index] = { status: 'pending', message: result.reason, at: now() };
-                await save(); return;
-              }
+              result = await driver.submit(task, filled.fingerprint, run.controller.signal);
             } catch { /* A lost acknowledgement is not permission to retry. */ }
+            if (result?.blocked) { await blockBeforeSubmit(run, result.reason); return; }
             if (job !== run) return;
             if (!await resolveSubmission(run, task)) return;
           } catch (error) {
             if (state?.inFlight) { await resolveSubmission(run, task); return; }
             if (!current(run)) break;
-            if (error.fatal) { state.enabled = false; state.stage = 'paused'; state.message = error.message; await save(); break; }
+            if (error.fatal || (state.stage === 'filling' && mayHaveWritten)) {
+              noteInterruptedFill(); state.enabled = false; state.stage = 'paused'; state.message = error.message; await save(); break;
+            }
             state.results[state.index++] = { status: 'pending', message: error.message || '该任务需要人工处理', at: now() }; await save();
           }
         }
@@ -157,7 +183,7 @@
     }
     async function stop() {
       epoch += 1; job?.controller.abort(); driver.halt?.(); await ready;
-      if (state?.enabled) { state.enabled = false; state.stage = state.inFlight ? 'uncertain' : 'stopped'; state.message = state.inFlight ? '已停止后续动作，正在核对在途提交。' : '已停止，不再启动新操作；已有草稿保留。'; await save(); }
+      if (state?.enabled) { noteInterruptedFill(); state.enabled = false; state.stage = state.inFlight ? 'uncertain' : 'stopped'; state.message = state.inFlight ? '已停止后续动作，正在核对在途提交。' : '已停止，不再启动新操作。请在原答题页核对已有答案。'; await save(); }
       return { ok: true };
     }
     async function permit(action) {

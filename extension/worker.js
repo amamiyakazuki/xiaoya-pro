@@ -29,6 +29,26 @@ async function handleAnswer(message, sender, ticket) {
   if (message.type === 'auto:stop') { answerStartEpoch++; return engine.stop(); }
   if (message.type === 'auto:get') return { ok: true, batch: await engine.get() };
   if (message.type === 'auto:verify') return engine.verify();
+  if (message.type === 'auto:open-draft') {
+    const batch = await engine.get();
+    if (!batch || batch.id !== message.batchId) throw Error('这份待补附件记录已被新批次替换，请刷新侧栏。');
+    if (batch.enabled || engine.busy()) throw Error('批次仍在运行，暂时不能返回草稿页。');
+    if (await answerStore.currentAccount() !== batch.account) throw Error('当前小雅账号与这份草稿所属账号不同，请切回原账号。');
+    const index = batch.tasks.findIndex(task => task.id === message.taskId);
+    if (index < 0 || batch.results[index]?.status !== 'draft' || !batch.results[index]?.draftPage) throw Error('找不到这份批次中的待补附件页面。');
+    const task = batch.tasks[index];
+    const draftPage = batch.results[index].draftPage;
+    const focused = await answerDriver.focusDraft(task, draftPage, async () => {
+      const current = await engine.get();
+      return current?.id === batch.id && !current.enabled
+        && current.account === batch.account && await answerStore.currentAccount() === batch.account
+        && current.tasks[index]?.id === task.id && current.results[index]?.status === 'draft'
+        && current.results[index]?.draftPage?.tabId === draftPage.tabId
+        && current.results[index]?.draftPage?.pageToken === draftPage.pageToken;
+    });
+    if (focused === false) throw Error('原答题页已关闭、已变化或账号状态无法确认，请在小雅中手动核对草稿。');
+    return { ok: true };
+  }
   if (message.type === 'auto:start') {
     if (!Array.isArray(message.ids) || !message.ids.length || message.ids.length > 200 || new Set(message.ids).size !== message.ids.length) throw Error('请选择 1–200 份任务。');
     const snapshot = await answerStore.load({ force: true });
@@ -157,7 +177,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     const ticket = answerStartEpoch;
     const action = () => handleAnswer(message, sender, ticket);
     const done = result => reply(result), failed = error => reply({ ok: false, error: error.message || '批次操作失败。' });
-    if (message.type === 'auto:start') commands = commands.then(action).then(done, failed);
+    if (message.type === 'auto:start' || message.type === 'auto:open-draft') commands = commands.then(action).then(done, failed);
     else action().then(done, failed);
     return true;
   }
