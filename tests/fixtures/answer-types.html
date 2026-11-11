@@ -1,0 +1,23 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>A2 题型模拟验收</title><link rel="icon" href="data:,">
+<style>body{font:16px/1.6 system-ui;background:#f5f7f8;color:#243c43;margin:30px auto;max-width:850px;padding:0 20px}.question,header{background:white;border:1px solid #d6e2df;border-radius:12px;padding:18px;margin:18px 0}header{position:sticky;top:0;z-index:1}label{display:block}.score{font-size:13px;color:#627970}textarea{width:80%}h2{margin:0}#stats{color:#19745b}</style>
+<header><h2>全题型浮标 · 本地模拟验收</h2><div>原始扩展脚本 + 模拟服务；不会调用真实 API</div><div id="stats">请求 0 次 · 图片 0 张 · 提交 0 次</div></header>
+<form id="question_content">
+<div class="question"><div class="exam_question_stem"><div class="stem_title">一加一等于 <span class="xy_richtext_blank_number_warp">(1) ____</span>，二加二等于 <span class="xy_richtext_blank_number_warp">(2) ____</span>。</div><span class="score">[填空题 20 分]</span></div><div id="question_201" class="question_gap_subject"><div class="_label">填空1:</div><textarea>原有草稿</textarea><div class="_label">填空2:</div><textarea></textarea></div></div>
+<div class="question"><div class="exam_question_stem"><div class="stem_title">一加一等于二。</div><span class="score">[判断题 10 分]</span></div><div id="question_202" class="question_single_subject"><label class="ant-radio-wrapper"><input type="radio" name="tf">错误</label><label class="ant-radio-wrapper"><input type="radio" name="tf">正确</label></div></div>
+<div class="question"><div class="exam_question_stem"><div class="stem_title">求 <span class="katex"><annotation encoding="application/x-tex">x^2+1</annotation></span> 在 x = 1 时的值。</div><span class="score">[计算题 20 分]</span></div><div id="question_203" class="question_subjective_subject"><textarea>人工推导保留</textarea></div></div>
+<div class="question"><div class="exam_question_stem"><div class="stem_title">请说明图中的数字。<svg width="120" height="70"><rect width="120" height="70" fill="#e3f6ed"/><text x="45" y="50" font-size="40">2</text></svg></div><span class="score">[简答题 10 分]</span></div><div id="question_204" class="question_subjective_subject"><textarea></textarea></div></div>
+<div class="question"><div class="exam_question_stem"><div class="stem_title">写一篇关于时间管理的短文，并以文件形式提交。</div><span class="score">[附件题 20 分]</span></div><div id="question_205" class="question_attach_subject"><input type="file"><textarea>已有说明保留</textarea></div></div>
+<div class="question"><div class="exam_question_stem"><div class="stem_title">公共材料：一共有三个苹果。</div><span class="score">[材料题 20 分]</span></div><div id="question_206" class="question_composite_subject"><div class="question"><div class="exam_question_stem"><div class="stem_title">吃掉一个后还剩几个？</div><span class="score">[简答题 20 分]</span></div><div id="question_207" class="question_subjective_subject"><textarea></textarea></div></div></div></div>
+</form>
+<script src="../../extension/ai-question.js"></script><script>
+window.XiaoyaQuestion={...window.XiaoyaQuestion,isPage:()=>true};
+let count=0,images=0,submits=0;
+const update=()=>document.getElementById('stats').textContent=`请求 ${count} 次 · 图片 ${images} 张 · 提交 ${submits} 次`;
+const answerFor=q=>({answer:q.type==='fill'?['2','4']:q.type==='judgment'?true:q.type==='compound'?q.parts.map(p=>({id:p.id,...answerFor(p)})):q.type==='attachment'?'时间管理\n\n为重要任务安排固定时间，按优先级逐项完成。':q.type==='calculation'?'代入 x = 1，结果为 2。':'2',explanation:'这是模拟回答，只验证结构与显示。'});
+window.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){
+ if(m.type==='ai:available')return {ok:true,available:true,revision:'types'};
+ if(m.type==='ai:query'){count++;images+=m.question.images?.length||0;update();const q=XiaoyaQuestion.validate(m.question);return {ok:true,revision:'types',result:XiaoyaQuestion.answer(JSON.stringify(answerFor(q)),q)};}
+ return {ok:true};
+}}};
+document.querySelector('form').addEventListener('submit',e=>{e.preventDefault();submits++;update();});
+</script><script src="../../extension/answer-dom.js"></script><script src="../../extension/answer-media.js"></script><script src="../../extension/answer-float.js"></script></html>

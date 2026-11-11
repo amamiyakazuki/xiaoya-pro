@@ -13,6 +13,11 @@
   "host_permissions": [
     "https://whut.ai-augmented.com/*"
   ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
   "background": {
     "service_worker": "worker.js"
   },
@@ -48,14 +53,13 @@
       ],
       "js": [
         "task-timing.js",
-        "content.js"
+        "content.js",
+        "ai-question.js",
+        "answer-dom.js",
+        "answer-media.js",
+        "answer-float.js"
       ],
       "run_at": "document_idle"
     }
-  ],
-  "optional_host_permissions": [
-    "https://*/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
   ]
 }

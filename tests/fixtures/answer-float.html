@@ -1,0 +1,27 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>A2 浮标本地验证</title>
+<style>body{font:16px/1.6 system-ui;background:#f4f7f8;color:#253b42;max-width:850px;margin:32px auto;padding:0 20px}header,.question{background:white;border:1px solid #dce4e7;border-radius:14px;padding:20px;margin-bottom:16px}button,select{font:inherit;margin-right:8px}label{display:block}.question{position:relative}#stats{color:#206751}</style>
+<header><h2>A2 浮标验证 · 模拟页面</h2><p>使用扩展原始脚本、本地模拟回答。不会调用真实 API，不读写真实配置。</p><label>模拟响应 <select id="mode"><option value="success">成功</option><option value="error">失败</option><option value="slow">等待取消/切题</option></select></label><button id="replace">切换第一题</button><button id="config">删除/恢复模拟配置</button><p id="stats">查询 0 次 · 取消 0 次 · 提交 0 次</p></header>
+<form id="question_content">
+<div class="question"><div class="exam_question_stem"><span class="sequence">1. </span><span class="stem_title">1 + 1 等于多少？</span><span> [单选题]</span></div><div class="question_single_subject" id="question_101"><label class="ant-radio-wrapper"><input type="radio" name="q" value="11"><span class="exam_answer_item_sequence">A.</span><span class="xy_rich_text_base">2</span></label><label class="ant-radio-wrapper"><input type="radio" name="q" value="12" checked><span class="exam_answer_item_sequence">B.</span><span class="xy_rich_text_base">3</span></label></div><div class="ext_question_operate"><label><input type="checkbox">收录（不是作答选项）</label></div></div>
+<div class="question"><div class="exam_question_stem"><span class="stem_title">简述加法的含义。</span></div><div class="question_subjective_subject" id="question_102"><textarea>已有人工草稿，应保持不变。</textarea></div></div>
+<div class="question"><div class="exam_question_stem"><span class="stem_title">请上传附件。</span></div><div class="question_attach_subject" id="question_103"><input type="file"></div></div>
+</form>
+<script src="../../extension/ai-question.js"></script>
+<script>
+// Fixture-only routing adapter; production schema remains unchanged.
+window.XiaoyaQuestion={...window.XiaoyaQuestion,isPage:()=>true};
+let requests=0,cancels=0,submits=0,configured=true,revision='fixture-1',listeners=[],pending=new Map();
+const stats=()=>document.getElementById('stats').textContent=`查询 ${requests} 次 · 取消 ${cancels} 次 · 提交 ${submits} 次`;
+window.chrome={runtime:{onMessage:{addListener:fn=>listeners.push(fn)},async sendMessage(msg){
+ if(msg.type==='ai:available')return {ok:true,available:configured,revision};
+ if(msg.type==='ai:query-cancel'){cancels++;stats();const done=pending.get(msg.requestId);if(done){done({ok:false,error:'已取消'});pending.delete(msg.requestId);}return {ok:true};}
+ if(msg.type==='ai:query'){requests++;stats();const mode=document.getElementById('mode').value;
+ if(mode==='slow')return new Promise(resolve=>pending.set(msg.requestId,resolve));
+ if(mode==='error')return {ok:false,error:'模拟服务暂时异常，请手动重试。'};
+ return {ok:true,revision,result:{answer:msg.question.type==='short'?'加法把数量合并。':'A. 2',explanation:'这是本地模拟回答，用于检查显示。<img src=x onerror=alert(1)> 补充要求：'+(msg.instructions||'无')}};
+ }
+}}};
+document.querySelector('form').addEventListener('submit',e=>{e.preventDefault();submits++;stats();});
+document.getElementById('replace').onclick=()=>{document.querySelector('.stem_title').textContent='新题：2 - 0 等于多少？';document.querySelector('[id="question_101"]')?.setAttribute('id','question_104');};
+document.getElementById('config').onclick=()=>{configured=!configured;revision+='x';listeners.forEach(fn=>fn({type:'ai:changed'}));};
+</script><script src="../../extension/answer-dom.js"></script><script src="../../extension/answer-media.js"></script><script src="../../extension/answer-float.js"></script></html>
