@@ -37,7 +37,8 @@
       item.textContent = `${new Date(entry.time).toLocaleTimeString('zh-CN')} ${entry.text}`;
       return item;
     }));
-    get('queueStart').disabled = running;
+    const answer = (await chrome.storage.local.get('xiaoyaAnswerBatch')).xiaoyaAnswerBatch;
+    get('queueStart').disabled = running || Boolean(answer?.enabled);
     get('queueStop').disabled = !running && !pending;
     get('gear').classList.toggle('running', running);
   }
@@ -75,7 +76,7 @@
     await render();
   });
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'session' && (changes.xiaoyaRun || changes.xiaoyaError || changes.xiaoyaPendingScan)) render();
+    if (area === 'session' && (changes.xiaoyaRun || changes.xiaoyaError || changes.xiaoyaPendingScan) || area === 'local' && changes.xiaoyaAnswerBatch) render();
   });
 
   (async () => {

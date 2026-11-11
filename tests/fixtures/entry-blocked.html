@@ -1,0 +1,21 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>B1 新窗口拦截回退验证</title><link rel="icon" href="data:,">
+<style>body{font:16px/1.7 system-ui;max-width:780px;margin:35px auto;padding:0 20px;color:#243d52;background:#f1f7fc}button{padding:10px 18px;cursor:pointer;border:1px solid #adcbe4;border-radius:8px;background:white}.card{padding:20px;border:1px solid #d4e3ef;border-radius:12px;background:white;margin-top:20px}.ant-modal{position:fixed;inset:28% 15%;padding:30px;background:white;border:2px solid #66a3d7;box-shadow:0 0 0 100vh #0004}#status{font-weight:600;color:#24674f}.entry_task_btn{margin-top:20px}</style>
+<h1>新窗口被拦截 · 回退验证</h1><p>仅本地模拟进入页面，不连接小雅或 AI，不填写和提交作业。</p><button id="run">运行进入流程测试</button><p id="status">尚未运行</p><div id="counts">进入点击 0 次 · 当前页跳转 0 次</div>
+<div class="card" id="survey_page"><div id="route">当前：任务预览页</div><span class="score_sub_title">共1题（100分）</span><div id="question_content"><div class="question"><div class="exam_question_stem"><div class="stem_title">一加一等于多少？</div><span class="score">[简答题 100 分]</span></div><div id="question_123" class="question_subjective_subject"><textarea disabled></textarea></div></div></div><button class="entry_task_btn">点击进入任务&gt;&gt;&gt;</button></div>
+<script>window.chrome={runtime:{id:'fixture',onMessage:{addListener(){}}}};</script>
+<script src="../../extension/ai-question.js"></script><script src="../../extension/answer-dom.js"></script><script src="../../extension/answer-batch.js"></script><script src="../../extension/answer-page.js"></script><script src="../../extension/answer-driver.js"></script>
+<script>
+const task=XiaoyaAnswerBatch.canonical({id:'test',courseId:'11',nodeId:'1',typeCode:2,name:'本地模拟',courseName:'测试'});
+let fakeLocation=new URL(task.url),entryClicks=0,fallbackClicks=0;
+const counts=()=>document.getElementById('counts').textContent=`进入点击 ${entryClicks} 次 · 当前页跳转 ${fallbackClicks} 次`;
+const adapter=XiaoyaAnswerPage.createAdapter({document,location:fakeLocation,permit:async()=>true});
+document.querySelector('.entry_task_btn').onclick=()=>{
+ entryClicks++;counts();const modal=document.createElement('div');modal.className='ant-modal';modal.innerHTML='<strong>窗口被浏览器拦截，无法正常打开新的页面</strong><p>你可以选择在当前页直接跳转至新的页面，或者手动处理浏览器拦截。</p><button>在当前页面跳转</button>';document.body.append(modal);
+ modal.querySelector('button').onclick=()=>{fallbackClicks++;counts();fakeLocation.href='https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/11/1/3/4';modal.remove();document.querySelector('.entry_task_btn').remove();document.querySelector('textarea').disabled=false;document.getElementById('route').textContent='当前：已进入答题页（未填写、未提交）';};
+};
+const api={tabs:{async create(){return {id:1};},async get(){return {id:1,url:fakeLocation.href};},async sendMessage(id,m){return adapter.command(m);}}};
+const driver=XiaoyaAnswerDriver.createDriver({chrome:api,getBatchId:()=> 'test',timeout:3000});
+document.getElementById('run').onclick=async()=>{
+ document.getElementById('run').disabled=true;document.getElementById('status').textContent='正在进入…';try{const signal=new AbortController().signal;await driver.open(task,signal);const s=await driver.enter(task,signal);document.getElementById('status').textContent=s.pageKind==='paper'&&entryClicks===1&&fallbackClicks===1?'通过：识别拦截提示 → 当前页跳转 → 确认答题页':'未通过';}catch(e){document.getElementById('status').textContent=e.message;}
+};
+</script></html>

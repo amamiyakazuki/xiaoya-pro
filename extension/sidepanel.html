@@ -26,6 +26,18 @@
       <div class="chips" id="chips"></div>
     </div>
 
+    <section class="answer-toolbar" aria-label="整份任务自动作答">
+      <div><strong id="answerSelected">已选 0 份</strong><button id="answerAll">选中筛选内任务</button><button id="answerClear">清空</button></div>
+      <div><button id="answerReview" disabled>自动作答并提交…</button><button id="answerStop" hidden>停止</button><button id="answerVerify" hidden>核对提交结果</button></div>
+      <p id="answerMessage" role="status"></p>
+      <details id="answerProgress" hidden><summary id="answerStage"></summary><ol id="answerResults"></ol></details>
+    </section>
+    <dialog id="answerConfirm" aria-labelledby="answerConfirmTitle">
+      <h3 id="answerConfirmTitle"></h3>
+      <p>下列任务将补齐空题并自动提交，包括只能提交一次的任务。含附件题时跳过附件，其余支持的题目填写后保留草稿，不自动提交，并继续下一份。已有人工答案和附件保留；其他题目无法填写时整份待处理。未选中的任务不会执行。</p>
+      <ol id="answerConfirmList"></ol>
+      <div class="answer-actions"><button id="answerBack">返回修改</button><button id="answerGo">确认，开始作答并提交</button></div>
+    </dialog>
     <div class="scroller" id="scroller">
       <div class="notice" id="notice" hidden></div>
       <div class="list" id="list"></div>
@@ -74,7 +86,9 @@
   </main>
   <script src="task-data.js"></script>
   <script src="panel-model.js"></script>
+  <script src="answer-batch.js"></script>
   <script src="sidepanel.js"></script>
+  <script src="panel-answer.js"></script>
   <script src="panel-queue.js"></script>
   <script src="ai-client.js"></script>
   <script src="panel-ai.js"></script>

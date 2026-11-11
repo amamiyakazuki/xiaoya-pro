@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>B1 一键作答 · 本地模拟</title>
+<link rel="stylesheet" href="../../extension/sidepanel.css">
+<link rel="icon" href="data:,"><style>.panel{width:380px;flex:none}.mock{padding:20px;flex:1;min-width:0}body{display:flex}#mockPaper{width:100%;height:80vh;border:1px solid #c3d9eb;border-radius:10px}#mockStats{font-size:14px;margin:10px 0}</style></head>
+<body>
+  <main class="panel" aria-label="任务面板">
+    <header class="head">
+      <span class="logo"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.3 12 13 4.5"/></svg></span>
+      <div class="title"><strong>小雅任务</strong><span id="sync" aria-live="polite"></span></div>
+      <button class="icon" id="searchBtn" aria-label="搜索" title="搜索" aria-expanded="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg></button>
+      <button class="icon" id="fold" aria-label="全部收起" title="全部收起"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.5 3.5-3 3.5 3M4.5 9.5l3.5 3 3.5-3"/></svg></button>
+      <button class="icon" id="refresh" aria-label="刷新任务" title="刷新"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2v3h-3"/></svg></button>
+      <button class="icon" id="gear" aria-label="打开设置" title="设置"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.5h6M12 4.5h2M2 11.5h2M8 11.5h6"/><circle cx="10" cy="4.5" r="1.8"/><circle cx="6" cy="11.5" r="1.8"/></svg></button>
+    </header>
+
+    <button class="brief" id="brief" aria-expanded="false"></button>
+    <div class="weekwrap" id="weekwrap"><section class="week" id="week" aria-label="未来 7 天"></section></div>
+
+    <div class="controls">
+      <div class="seg" role="tablist" id="tabs"></div>
+      <label class="search" id="searchBox" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="search" type="search" placeholder="搜索课程或任务" aria-label="搜索课程或任务"></label>
+      <div class="chips" id="chips"></div>
+    </div>
+
+    <section class="answer-toolbar" aria-label="整份任务自动作答">
+      <div><strong id="answerSelected">已选 0 份</strong><button id="answerAll">选中筛选内任务</button><button id="answerClear">清空</button></div>
+      <div><button id="answerReview" disabled>自动作答并提交…</button><button id="answerStop" hidden>停止</button><button id="answerVerify" hidden>核对提交结果</button></div>
+      <p id="answerMessage" role="status"></p>
+      <details id="answerProgress" hidden><summary id="answerStage"></summary><ol id="answerResults"></ol></details>
+    </section>
+    <dialog id="answerConfirm" aria-labelledby="answerConfirmTitle">
+      <h3 id="answerConfirmTitle"></h3>
+      <p>下列每份任务将补齐空题并自动提交，包括只能提交一次的任务。已有人工答案保留；有题无法填写时整份待处理。未选中的任务不会执行。</p>
+      <ol id="answerConfirmList"></ol>
+      <div class="answer-actions"><button id="answerBack">返回修改</button><button id="answerGo">确认，开始作答并提交</button></div>
+    </dialog>
+    <div class="scroller" id="scroller">
+      <div class="notice" id="notice" hidden></div>
+      <div class="list" id="list"></div>
+    </div>
+
+    <section class="sheet" id="sheet" aria-label="设置">
+      <div class="sheet-head"><h3>设置</h3><button class="icon" id="closeSheet" aria-label="关闭设置"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
+      <div class="sheet-body">
+        <section class="sect" id="aiSettings" aria-labelledby="aiHeading">
+          <span id="aiHeading">AI API</span>
+          <div class="group ai-form">
+            <label for="aiAddress">API 地址</label>
+            <input id="aiAddress" type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" aria-describedby="aiAddressHelp aiEndpoint">
+            <p class="note" id="aiAddressHelp">支持 Chat Completions 兼容服务的基础地址或完整请求地址。</p>
+            <div class="ai-target"><span>实际请求地址</span><output id="aiEndpoint">填写地址后显示实际请求地址</output></div>
+            <label for="aiKey">API 密钥</label>
+            <input id="aiKey" type="password" placeholder="填写自己的 API 密钥" autocomplete="off" spellcheck="false" aria-describedby="aiKeyHelp">
+            <p class="note" id="aiKeyHelp">仅保存在当前浏览器。已保存密钥不回显；更换请求地址需重新填写。</p>
+            <label for="aiModel">模型</label>
+            <input id="aiModel" type="text" placeholder="填写服务商提供的模型名称" autocomplete="off" spellcheck="false">
+            <div class="ai-actions"><button id="aiSave" type="button">保存配置</button><button id="aiTest" type="button">测试连接</button><button id="aiCancel" type="button" hidden>取消测试</button><button id="aiDelete" type="button">删除配置</button></div>
+            <p id="aiStatus" class="ai-status" role="status" aria-live="polite"></p>
+          </div>
+          <p class="note">测试只发送固定样题，不读取作业；服务商可能收取少量费用。首次保存或测试会请求访问所填 API 域名。删除配置不撤销浏览器已授予的域名权限。</p>
+        </section>
+        <div class="sect"><span>默认排列</span><div class="seg" id="view"></div></div>
+        <div class="sect"><span>学习设置</span>
+          <div class="group">
+            <div class="opt">视频速度<div class="seg" id="rate"></div></div>
+            <div class="opt">课件停留时间<span class="hint">自动读取任务要求</span></div>
+            <label class="opt" for="optBackground">后台继续学习<span class="switch"><input id="optBackground" type="checkbox"><i></i></span></label>
+            <label class="opt" for="optMuted">静音自动播放<span class="switch"><input id="optMuted" type="checkbox"><i></i></span></label>
+            <label class="opt" for="optAutoNext">完成后自动下一任务<span class="switch"><input id="optAutoNext" type="checkbox"><i></i></span></label>
+            <label class="opt" for="optRecursive">课程内包含子章节<span class="switch"><input id="optRecursive" type="checkbox"><i></i></span></label>
+          </div>
+        </div>
+        <div class="sect"><span>视频课件队列</span>
+          <div class="group">
+            <div class="queue"><button id="queueStart">开始队列</button><button id="queueStop">停止</button></div>
+            <div class="queue-state" aria-live="polite"><div class="queue-head"><strong id="queueStatus">尚未开始</strong><span id="queueCount"></span></div><ol id="queueLogs"></ol></div>
+          </div>
+          <p class="note">请在小雅“我的课程”首页或课程资源页点开始。保留一个小雅标签页，即可使用其他网页。运行时请勿刷新或关闭小雅页，计时以平台为准。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <section class="mock"><h2>B1 完整流程模拟验收</h2><p>仅本地样题，不调用真实 API，也不提交真实作业。</p><div id="mockStats"></div><iframe id="mockPaper" title="模拟作业"></iframe></section>
+  <script src="../../extension/task-data.js"></script><script src="batch-mock.js"></script>
+  <script src="../../extension/ai-question.js"></script>
+  <script src="../../extension/answer-dom.js"></script>
+  <script src="../../extension/answer-page.js"></script>
+  <script src="../../extension/panel-model.js"></script>
+  <script src="../../extension/answer-batch.js"></script>
+  <script>mockInit();</script>
+  <script src="../../extension/sidepanel.js"></script>
+  <script src="../../extension/panel-answer.js"></script>
+
+
+
+</body>
+</html>

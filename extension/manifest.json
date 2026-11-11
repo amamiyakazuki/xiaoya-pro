@@ -57,7 +57,9 @@
         "ai-question.js",
         "answer-dom.js",
         "answer-media.js",
-        "answer-float.js"
+        "answer-float.js",
+        "answer-batch.js",
+        "answer-page.js"
       ],
       "run_at": "document_idle"
     }

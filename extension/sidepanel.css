@@ -172,3 +172,25 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .ai-status[data-tone="success"] { color: var(--ok); }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* Whole-task selection and the explicitly confirmed answering batch. */
+.answer-check { flex:0 0 auto; width:16px; height:16px; margin:0 0 0 9px; accent-color:#367cc4; cursor:pointer; }
+.answer-toolbar { padding:8px 14px; border-bottom:1px solid #d6e5f0; background:#eff7fc; font-size:12px; }
+.answer-toolbar > div { display:flex; align-items:center; gap:7px; margin:4px 0; flex-wrap:wrap; }
+.answer-toolbar button,.answer-actions button { border:1px solid #c3d9eb; border-radius:7px; background:white; padding:6px 9px; font:inherit; cursor:pointer; }
+.answer-toolbar button:disabled,.answer-actions button:disabled { opacity:.5; cursor:default; }
+#answerReview,#answerGo { background:#276eae; color:white; border-color:#276eae; }
+#answerMessage:empty { display:none; }
+#answerMessage { margin:6px 0; color:#9b4d20; }
+#answerProgress { max-height:170px; overflow:auto; }
+#answerProgress summary { cursor:pointer; padding:5px 0; line-height:1.5; }
+#answerResults,#answerConfirmList { padding-left:20px; }
+#answerResults li,#answerConfirmList li { padding:6px 0; }
+#answerResults span,#answerConfirmList span { display:block; color:#526e82; font-size:12px; margin-top:3px; }
+#answerResults span { white-space:pre-line; }
+#answerConfirm { width:calc(100% - 32px); max-width:480px; max-height:85vh; border:1px solid #c3d9eb; border-radius:12px; padding:18px; background:#f8fcff; color:#243d52; }
+#answerConfirm::backdrop { background:rgba(20,40,60,.4); }
+#answerConfirm h3 { margin:0 0 10px; font-size:16px; }
+#answerConfirm p { font-size:13px; line-height:1.6; }
+#answerConfirmList { max-height:40vh; overflow:auto; }
+.answer-actions { display:flex; justify-content:flex-end; gap:8px; }

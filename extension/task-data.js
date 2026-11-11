@@ -117,14 +117,15 @@
     const inflight = new Map();
     let refreshing = null;
 
-    function request(path, token) {
-      if (inflight.has(path)) return inflight.get(path);
+    function request(path, token, fresh = false) {
+      if (!fresh && inflight.has(path)) return inflight.get(path);
       const job = limit(async () => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
           const response = await fetchImpl(ORIGIN + path, {
             method: 'GET',
+            ...(fresh ? { cache: 'no-store' } : {}),
             credentials: 'include',
             signal: controller.signal,
             headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' }
@@ -137,8 +138,8 @@
         } finally {
           clearTimeout(timer);
         }
-      }).finally(() => inflight.delete(path));
-      inflight.set(path, job);
+      }).finally(() => { if (!fresh) inflight.delete(path); });
+      if (!fresh) inflight.set(path, job);
       return job;
     }
 
@@ -274,6 +275,30 @@
 
     return {
       peek, load, refresh,
+      checkSubmitted: async (task, account) => {
+        if (!account || !/^\d+$/.test(String(task?.courseId || '')) || !/^\d+$/.test(String(task?.nodeId || '')) || ![2, 3, 4].includes(task.typeCode)) throw new Error('无法确认待核对任务的身份。');
+        const token = await getToken();
+        if (!token) throw new Error('请先登录该批次的小雅账号。');
+        const before = await request(PATHS.account, token, true);
+        if (String(before?.info?.id ?? '') !== account) throw new Error('小雅账号已变化，请切回该批次账号再核对。');
+        const data = await request(PATHS.notices(task.courseId), token, true);
+        if (!Array.isArray(data?.student_tasks)) throw new Error('平台未返回可核对的任务状态，请稍后重试。');
+        if (await getToken() !== token) throw new Error('核对期间登录状态发生变化，请重新核对。');
+        const after = await request(PATHS.account, token, true);
+        if (String(after?.info?.id ?? '') !== account) throw new Error('核对期间账号发生变化，请重新核对。');
+        const matched = data.student_tasks.filter(row => row && String(row.node_id) === String(task.nodeId)
+          && (!task.taskId || String(row.task_id) === String(task.taskId))
+          && (row.group_id == null || String(row.group_id) === String(task.courseId))
+          && Number(row.task_type) === task.typeCode);
+        return matched.length === 1 && Number(matched[0].finish) === 2;
+      },
+      currentAccount: async () => {
+        const token = await getToken();
+        if (!token) throw new Error('请先登录小雅。');
+        const info = await request(PATHS.account, token);
+        if (info?.info?.id === undefined || info?.info?.id === null) throw new Error('无法确认当前小雅账号。');
+        return String(info.info.id);
+      },
       rememberCourses: found => mergeCourses(null, found),
       knownCourses: readCourses,
       getPins: async account => (await readKey(PINS_PREFIX + account)) || [],

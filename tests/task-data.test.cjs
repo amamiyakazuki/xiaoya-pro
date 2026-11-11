@@ -390,3 +390,22 @@ test('readPageToken matches the prefixed cookie name used by the platform and ig
     delete globalThis.document;
   }
 });
+const receiptTask = {courseId:'100',nodeId:'1001',taskId:'2001',typeCode:2};
+const receiptRow = extra => ({node_id:'1001',task_id:'2001',task_type:2,finish:2,...extra});
+test('submission check reads fresh account and exact course task without cached completion or broad refresh',async()=>{
+ const f=harness({routes:{queryTaskNotices:ok({student_tasks:[receiptRow()]})}});
+ assert.equal(await f.store.checkSubmitted(receiptTask,'u1'),true);
+ assert.equal(f.state.calls.length,3);assert.ok(f.state.calls.every(c=>c.init.method==='GET'&&c.init.cache==='no-store'));
+ assert.equal(f.state.calls.filter(c=>c.path.includes('queryTaskNotices')).length,1);
+});
+test('nonempty finish_time, wrong task identity/type or duplicate rows cannot confirm submission',async()=>{
+ for(const rows of [[receiptRow({finish:0,finish_time:PAST})],[receiptRow({task_id:'other'})],[receiptRow({node_id:'other'})],[receiptRow({group_id:'999'})],[receiptRow({task_type:1})],[receiptRow(),receiptRow()],[]]){
+  const f=harness({routes:{queryTaskNotices:ok({student_tasks:rows})}});assert.equal(await f.store.checkSubmitted(receiptTask,'u1'),false);
+ }
+});
+test('submission check fails on account switch or failed/malformed platform result',async()=>{
+ const f=harness({account:'other'});await assert.rejects(f.store.checkSubmitted(receiptTask,'u1'),/账号/);
+ const g=harness({routes:{queryTaskNotices:()=>{g.state.token='token-b';return ok({student_tasks:[receiptRow()]});}}});await assert.rejects(g.store.checkSubmitted(receiptTask,'u1'),/登录状态/);
+ const h=harness({routes:{queryTaskNotices:http(500)}});await assert.rejects(h.store.checkSubmitted(receiptTask,'u1'),/HTTP/);
+ const k=harness({routes:{queryTaskNotices:ok({})}});await assert.rejects(k.store.checkSubmitted(receiptTask,'u1'),/任务状态/);
+});

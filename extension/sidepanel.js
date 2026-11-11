@@ -52,6 +52,7 @@ function row(task, showCourse, now) {
   const look = TYPE_ICONS[task.type] || TYPE_ICONS.其他;
   const on = state.pins.has(task.id);
   return `<li class="row${state.opened === task.id ? ' now' : ''}">
+    ${globalThis.XiaoyaPanelAnswer?.checkbox(task) || ''}
     <button class="open" data-act="open" data-id="${esc(task.id)}" data-key="o-${esc(task.id)}" title="${esc(display.tip)}">
       <span class="ticon" style="--h:${look.h}">${look.icon}</span>
       <span class="name">${esc(task.name)}</span>${showCourse ? `<span class="rcourse">${esc(task.courseName)}</span>` : ''}<span class="when ${display.tone}">${esc(display.time)}</span>
@@ -118,6 +119,7 @@ function renderList(animate) {
   list.innerHTML = html;
   if (active) document.querySelector(`[data-key="${CSS.escape(active)}"]`)?.focus();
   updateFold();
+  globalThis.XiaoyaPanelAnswer?.render();
 }
 
 function updateFold() {
@@ -214,7 +216,7 @@ async function openTask(task) {
   renderList(false);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const run = (await chrome.storage.session.get(RUN_KEY))[RUN_KEY];
-  if (model.openTarget(tab, run) === 'same') await chrome.tabs.update(tab.id, { url: task.url });
+  if (!globalThis.XiaoyaPanelAnswer?.busy() && model.openTarget(tab, run) === 'same') await chrome.tabs.update(tab.id, { url: task.url });
   else await chrome.tabs.create({ url: task.url });
 }
 

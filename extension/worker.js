@@ -2,6 +2,45 @@
 if (typeof importScripts === 'function') importScripts('task-data.js');
 if (typeof importScripts === 'function') importScripts('ai-question.js', 'ai-client.js', 'ai-service.js');
 const aiService = globalThis.XiaoyaAIService?.createService();
+if (typeof importScripts === 'function') importScripts('answer-batch.js', 'answer-driver.js');
+let answerEngine, answerDriver, answerStartEpoch = 0;
+const answerStore = globalThis.XiaoyaTaskData?.createTaskStore();
+function answers() {
+  if (answerEngine) return answerEngine;
+  answerDriver = globalThis.XiaoyaAnswerDriver.createDriver({ chrome, getBatchId: () => answerEngine.getId(),
+    verifySubmitted: async task => answerStore.checkSubmitted(task, (await answerEngine.get()).account)
+  });
+  answerEngine = globalThis.XiaoyaAnswerBatch.createEngine({ storage: chrome.storage.local, driver: answerDriver,
+    getAccount: () => answerStore.currentAccount(), query: (q, signal) => aiService.querySaved(q, signal),
+    aiReady: () => aiService.available(),
+    videoActive: async () => { const data = await chrome.storage.session.get(['xiaoyaRun', 'xiaoyaPendingScan']); return Boolean(data.xiaoyaRun?.enabled || data.xiaoyaPendingScan); }
+  });
+  return answerEngine;
+}
+const answerPanel = sender => sender.id === chrome.runtime.id && !sender.tab && sender.url === chrome.runtime.getURL('sidepanel.html');
+async function handleAnswer(message, sender, ticket) {
+  if (message.type === 'auto:permit') {
+    if (sender.id !== chrome.runtime.id || !answerEngine) return { allowed: false };
+    const task = answerEngine.getTask();
+    return { allowed: Boolean(task && await answerDriver.permits(message, sender, task) && await answerEngine.permit(message)) };
+  }
+  if (!answerPanel(sender)) throw Error('只有任务面板可以控制批次。');
+  const engine = answers();
+  if (message.type === 'auto:stop') { answerStartEpoch++; return engine.stop(); }
+  if (message.type === 'auto:get') return { ok: true, batch: await engine.get() };
+  if (message.type === 'auto:verify') return engine.verify();
+  if (message.type === 'auto:start') {
+    if (!Array.isArray(message.ids) || !message.ids.length || message.ids.length > 200 || new Set(message.ids).size !== message.ids.length) throw Error('请选择 1–200 份任务。');
+    const snapshot = await answerStore.load({ force: true });
+    if (ticket !== answerStartEpoch) throw Error('启动已取消。');
+    if (snapshot.status !== 'ok' || snapshot.account !== message.account) throw Error('无法确认当前账号，请刷新任务后重新选择。');
+    const tasks = message.ids.map(id => snapshot.tasks.find(task => task.id === id));
+    if (tasks.some(task => !globalThis.XiaoyaAnswerBatch.eligible(task))) throw Error('清单中的任务已完成、不可执行或身份变化，请刷新后重选。');
+    return engine.start({ account: snapshot.account, tasks });
+  }
+  throw Error('未知批次操作。');
+}
+
 chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 const KEY = 'xiaoyaRun';
 chrome.alarms.create('xiaoya-tick', { periodInMinutes: 0.5 });
@@ -39,6 +78,10 @@ async function connectPage(tabId) {
   if (!health?.ok || health.protocol !== 6) throw new Error('页面脚本连接失败，请刷新小雅首页后重试。');
 }
 async function handle(message, sender) {
+    if (['start', 'scan', 'scan-resume'].includes(message.type) && globalThis.XiaoyaAnswerBatch) {
+      const engine = answers(); await engine.get();
+      if (engine.busy()) throw Error('自动作答正在运行，请先停止。');
+    }
     const stored = (await chrome.storage.session.get(KEY))[KEY];
     if (message.type === 'login-ready') return await resumeScan(sender.tab?.id);
     if (message.type === 'scan') {
@@ -110,7 +153,18 @@ async function handle(message, sender) {
     }
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (typeof message?.type === 'string' && message.type.startsWith('auto:')) {
+    const ticket = answerStartEpoch;
+    const action = () => handleAnswer(message, sender, ticket);
+    const done = result => reply(result), failed = error => reply({ ok: false, error: error.message || '批次操作失败。' });
+    if (message.type === 'auto:start') commands = commands.then(action).then(done, failed);
+    else action().then(done, failed);
+    return true;
+  }
   if (typeof message?.type === 'string' && message.type.startsWith('ai:')) {
+    if (['ai:query', 'ai:test', 'ai:save', 'ai:delete'].includes(message.type) && answerEngine?.busy()) {
+      reply({ ok: false, error: '自动作答正在运行，请停止后再操作 AI 设置或浮标。' }); return true;
+    }
     // AI requests must not occupy the video queue's serialized command chain.
     if (aiService) aiService.handle(message, sender).then(reply);
     else reply({ ok: false, error: 'AI 模块尚未加载，请重新加载扩展。' });
@@ -131,6 +185,7 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name !== 'xiaoya-tick') return;
+  if (globalThis.XiaoyaAnswerBatch) await answers().get();
   const run = (await chrome.storage.session.get(KEY))[KEY];
   if (run?.enabled) await chrome.tabs.sendMessage(run.tabId, { type: 'tick' }).catch(() => {});
 });
