@@ -24,7 +24,7 @@ foreach ($target in $targets) {
     $browserName = if ($target -eq 'edge') { 'Microsoft Edge' } else { 'Google Chrome' }
     $managementUrl = if ($target -eq 'edge') { 'edge://extensions/' } else { 'chrome://extensions/' }
     $instructions = @"
-小雅刷课助手 $($manifest.version) — $browserName
+小雅助手 Pro $($manifest.version) — $browserName
 
 1. 请使用 $browserName 120 或以上版本。
 2. 将本安装包完整解压到固定目录。

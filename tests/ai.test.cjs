@@ -245,3 +245,110 @@ test('image questions use the vision model, or are skipped when vision is off', 
   assert.equal(skipped.code, 'images', '关闭图片识别且没有识图模型时整题不发送');
   assert.equal(g.calls.length, 0);
 });
+
+test('attachment queries get a longer timeout than regular questions', async () => {
+  globalThis.XiaoyaQuestion = require('../extension/ai-question.js');
+  const f = fixture({ timeoutMs: 20, fetchImpl: () => new Promise(() => {}) });
+  await f.send('save');
+  const pageSender = { id: sender.id, url: 'https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/1/2/3/4', tab: { id: 5 }, frameId: 0, documentId: 'page-1' };
+  const question = { id: 'question_1', type: 'attachment', stem: '写一段代码', options: [] };
+  let settled = false;
+  const pending = f.send('query', { requestId: 'slow-1', question, slow: true }, pageSender).finally(() => { settled = true; });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(settled, false, '附件题不应按普通的 20ms 超时中断');
+  await f.send('query-cancel', { requestId: 'slow-1' }, pageSender);
+  assert.equal((await pending).code, 'cancelled');
+});
+
+// ---- 流式输出与分阶段超时 ----
+const pageSender = { id: sender.id, url: 'https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/1/2/3/4', tab: { id: 5 }, frameId: 0, documentId: 'page-1' };
+const shortQuestion = { id: 'question_1', type: 'short', stem: '简述哈夫曼树的作用', options: [] };
+const sseEvent = (delta, finish_reason = null) => `data: ${JSON.stringify({ choices: [{ delta, finish_reason }] })}\n\n`;
+// chunks: 字符串立即发送；数字表示先等待这么多毫秒；null 表示之后不再发送也不结束。
+function sse(chunks) {
+  const encoder = new TextEncoder();
+  return new Response(new ReadableStream({ async start(controller) {
+    for (const chunk of chunks) {
+      if (chunk === null) return;
+      if (typeof chunk === 'number') { await new Promise(resolve => setTimeout(resolve, chunk)); continue; }
+      controller.enqueue(encoder.encode(chunk));
+    }
+    controller.close();
+  } }), { headers: { 'content-type': 'text/event-stream' } });
+}
+function streamFixture(options) {
+  globalThis.XiaoyaQuestion = require('../extension/ai-question.js');
+  const f = fixture(options);
+  const progress = [];
+  f.api.tabs = { sendMessage: async (tabId, message, target) => { progress.push({ tabId, message, target }); } };
+  return { ...f, progress };
+}
+const answerJSON = JSON.stringify({ answer: '按频率构造最优前缀编码，\n高频字符用短码。', explanation: '哈夫曼编码的带权路径长度最小。' });
+
+test('queries stream the answer and relay stages, counts and a live preview to the asking page', async () => {
+  const f = streamFixture({ fetchImpl: async () => sse([
+    ': keep-alive\n\n',
+    sseEvent({ role: 'assistant', reasoning_content: '先回忆定义' }),
+    sseEvent({ content: answerJSON.slice(0, 20) }), 5,
+    sseEvent({ content: answerJSON.slice(20) }),
+    sseEvent({}, 'stop'), 'data: [DONE]\n\n'
+  ]) });
+  await f.send('save');
+  const result = await f.send('query', { requestId: 'stream-1', question: shortQuestion }, pageSender);
+  assert.equal(result.ok, true);
+  assert.match(result.result.answer, /最优前缀编码/);
+  assert.equal(JSON.parse(f.calls[0][1].body).stream, true, '题目查询使用流式请求');
+  const stages = f.progress.map(item => item.message.stage);
+  for (const stage of ['waiting', 'thinking', 'writing', 'parsing']) assert.ok(stages.includes(stage), `应回报 ${stage} 阶段`);
+  assert.ok(f.progress.every(item => item.tabId === 5 && item.target.frameId === 0 && item.target.documentId === 'page-1'), '只发回发起请求的页面');
+  assert.ok(f.progress.every(item => item.message.requestId === 'stream-1'));
+  const writing = f.progress.filter(item => item.message.stage === 'writing').at(-1).message;
+  assert.ok(writing.chars > 0);
+  assert.match(f.progress.at(-1).message.preview, /高频字符用短码/, '预览取自 answer 字段，换行已还原');
+  assert.ok(!JSON.stringify(f.progress).includes(config.key), '进度消息不含密钥');
+});
+
+test('a stream that goes quiet is stopped as stalled, while a steadily writing stream is never cut off', async () => {
+  const quiet = streamFixture({ timeoutMs: 30, fetchImpl: async () => sse([sseEvent({ content: '{"answer":"写到一半' }), null]) });
+  await quiet.send('save');
+  const stalled = await quiet.send('query', { requestId: 'quiet', question: shortQuestion }, pageSender);
+  assert.equal(stalled.code, 'stalled');
+
+  // 每 10ms 一段、共约 120ms，远超 30ms 的等待上限，但一直在输出。
+  const pieces = answerJSON.match(/.{1,6}/gs).flatMap(piece => [10, sseEvent({ content: piece })]);
+  const busy = streamFixture({ timeoutMs: 30, fetchImpl: async () => sse([...pieces, sseEvent({}, 'stop'), 'data: [DONE]\n\n']) });
+  await busy.send('save');
+  const done = await busy.send('query', { requestId: 'busy', question: shortQuestion }, pageSender);
+  assert.equal(done.ok, true, '持续输出时不按总时长中断');
+});
+
+test('no response at all still reports a timeout; truncation and dropped connections are classified', async () => {
+  const silent = streamFixture({ timeoutMs: 20, fetchImpl: () => new Promise(() => {}) });
+  await silent.send('save');
+  assert.equal((await silent.send('query', { requestId: 'silent', question: shortQuestion }, pageSender)).code, 'timeout');
+
+  const cut = streamFixture({ fetchImpl: async () => sse([sseEvent({ content: '{"answer":"太长' }), sseEvent({}, 'length'), 'data: [DONE]\n\n']) });
+  await cut.send('save');
+  assert.equal((await cut.send('query', { requestId: 'cut', question: shortQuestion }, pageSender)).code, 'truncated');
+
+  const dropped = streamFixture({ fetchImpl: async () => sse([sseEvent({ content: '{"answer":"断' })]) });
+  await dropped.send('save');
+  assert.equal((await dropped.send('query', { requestId: 'dropped', question: shortQuestion }, pageSender)).code, 'network');
+});
+
+test('providers that ignore stream and return one JSON body still work', async () => {
+  const f = streamFixture({ fetchImpl: async () => reply(answerJSON) });
+  await f.send('save');
+  const result = await f.send('query', { requestId: 'plain', question: shortQuestion }, pageSender);
+  assert.equal(result.ok, true);
+  assert.match(result.result.answer, /最优前缀编码/);
+});
+
+test('peek extracts the partially written answer from incomplete JSON', () => {
+  assert.equal(client.peek(''), '');
+  assert.equal(client.peek('{"answer'), '');
+  assert.equal(client.peek('{"answer": "第一行\\n第二'), '第一行\n第二');
+  assert.equal(client.peek('{"answer":"含\\"引号\\"和\\u4e2d文","explanation":"x"}'), '含"引号"和中文');
+  assert.equal(client.peek('{"answer":"末尾半个转义\\'), '末尾半个转义');
+  assert.equal(client.peek('{"answer":["A","C"],"explanation":"x"}'), '["A","C"]');
+});

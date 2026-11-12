@@ -120,7 +120,7 @@
       let reason = '';
       if (state === 'unknown' || state !== 'done' && !writable) {
         if (parsed.error) reason = parsed.error === 'question' ? '题干、题型或选项格式未通过校验，无法完整读取题目' : parsed.error;
-        else if (question?.type === 'attachment') reason = '需要上传文件；当前不支持自动上传，也无法自动确认已有附件是否满足要求';
+        else if (question?.type === 'attachment') reason = '需要上传文件；可用题旁浮标生成并附加，一键批次不处理附件题';
         else if (question?.type === 'judgment') reason = '判断题的自动填写尚未适配';
         else if (question?.type === 'compound') reason = '组合题的子题自动填写尚未适配';
         else if (question?.type === 'open') reason = '该题型的自动填写尚未适配';

@@ -35,7 +35,14 @@ test('essay/calculation/attachment outputs retain paragraphs and do not read upl
   for (const [label, type] of [['论述题', 'essay'], ['计算题', 'calculation'], ['证明题', 'calculation'], ['附件题', 'attachment'], ['名词解释题', 'short']]) {
     const value = dom.extract(node({ label, subject: label === '附件题' ? 'attach' : 'subjective', stem: '回答本题。', body: '<a href="https://secret.test/answer">人工已上传答卷.docx</a><textarea>人工答案</textarea>' }));
     assert.equal(value.question.type, type); assert.ok(!JSON.stringify(value).includes('人工'));
-    assert.equal(schema.answer(output('第一段\n\n第二段'), value.question).answer, '第一段\n\n第二段');
+    const payload = answer => JSON.stringify({ answer, explanation: '解释', ...(type === 'attachment' ? { fileName: 'answer.txt' } : {}) });
+    const parsed = schema.answer(payload('第一段\n\n第二段'), value.question);
+    if (type === 'attachment') {
+      // 旧格式（单个内容 + fileName）兼容为一个文件，段落保留。
+      assert.deepEqual(parsed.files, [{ fileName: 'answer.txt', content: '第一段\n\n第二段\n' }], '附件题返回可上传的文件');
+      assert.throws(() => schema.answer(output('内容'), value.question), '缺少文件名时拒绝，避免上传无名文件');
+      assert.throws(() => schema.answer(JSON.stringify({ answer: '内容', explanation: '解释', fileName: '../evil.py' }), value.question));
+    } else assert.equal(parsed.answer, '第一段\n\n第二段');
   }
 });
 test('unfamiliar named text types display a specific unverified generic warning', () => {
@@ -86,4 +93,22 @@ test('compound questions retain public material, require every child and correct
 });
 test('images rejected by API get actionable model-capability message without provider body', async () => {
   await assert.rejects(() => client.query(client.config({ address: 'https://api.example.com', key: 'private', model: 'text-only' }), { ...q(), images: [png] }, { fetchImpl: async () => new Response('private provider body', { status: 400 }) }), { code: 'vision' });
+});
+
+test('attachment answers are a validated list of files', () => {
+  const question = dom.extract(node({ label: '附件题', subject: 'attach', stem: '编写程序并上传。', body: '' })).question;
+  const files = [{ fileName: 'main.py', content: 'from utils import f\nprint(f())' }, { fileName: 'utils.py', content: 'def f():\n    return 1' }];
+  const parsed = schema.answer(JSON.stringify({ answer: files, explanation: '两个文件' }), question);
+  assert.deepEqual(parsed.files.map(file => file.fileName), ['main.py', 'utils.py']);
+  assert.equal(parsed.files[1].content, 'def f():\n    return 1\n', '内容原样保留并以换行结尾');
+  assert.equal(parsed.solution.kind, 'files');
+  assert.match(parsed.answer, /2 个文件/);
+  const bad = list => () => schema.answer(JSON.stringify({ answer: list, explanation: 'x' }), question);
+  assert.throws(bad([]), '至少一个文件');
+  assert.throws(bad(Array.from({ length: 6 }, (_, i) => ({ fileName: `f${i}.py`, content: 'x' }))), '最多 5 个文件');
+  assert.throws(bad([{ fileName: 'a.py', content: 'x' }, { fileName: 'A.py', content: 'y' }]), '文件名不能重复（不区分大小写）');
+  assert.throws(bad([{ fileName: 'dir/a.py', content: 'x' }]), '不允许路径');
+  assert.throws(bad([{ fileName: 'noext', content: 'x' }]), '必须带扩展名');
+  assert.throws(bad([{ fileName: 'a.py', content: '   ' }]), '内容不能为空');
+  assert.throws(bad([{ fileName: 'a.py', content: 'x'.repeat(60001) }]), '单个文件大小受限');
 });

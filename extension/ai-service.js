@@ -39,8 +39,22 @@
       if (typeof message.requestId !== 'string' || !/^[\w-]{1,100}$/.test(message.requestId)) throw new AIError('format');
       const job = { requestId: message.requestId, owner: owner(sender), controller: new AbortController() };
       active = job;
-      let timer, expired = false;
-      const aborted = new Promise((_, reject) => job.controller.signal.addEventListener('abort', () => reject(new AIError(expired ? 'timeout' : 'cancelled')), { once: true }));
+      let timer, capTimer, expired = '';
+      const aborted = new Promise((_, reject) => job.controller.signal.addEventListener('abort', () => reject(new AIError(expired || 'cancelled')), { once: true }));
+      // 附件题要生成整段代码，给更长的等待时间。
+      // limit 同时用作「首次响应」和「两段内容之间」的等待上限；只要还在持续输出就不会被打断。
+      const limit = message.slow === true ? Math.max(timeoutMs, 60000) : timeoutMs;
+      // 总时长上限留在扩展后台单次事件的 5 分钟限制之内。
+      const cap = Math.max(limit, message.slow === true ? 270000 : 120000);
+      const expire = code => { expired = code; job.controller.abort(); };
+      const arm = code => { clearTimeout(timer); timer = setTimeout(() => expire(code), limit); };
+      const progress = relay(message.requestId, sender, query);
+      const onProgress = update => {
+        if (job.controller.signal.aborted) return;
+        // 已收到服务端内容后，计时从「等待响应」切换为「生成停顿」。
+        if (update.stage !== 'waiting') arm('stalled');
+        progress(update);
+      };
       const work = async () => {
         await edits;
         const previous = await read();
@@ -54,18 +68,42 @@
         }
         await permitted(settings);
         if (job.controller.signal.aborted) throw new AIError('cancelled');
-        const options = { signal: job.controller.signal, fetchImpl, instructions: message.instructions };
+        const options = { signal: job.controller.signal, fetchImpl, instructions: message.instructions, onProgress };
         return query ? client.query(settings, message.question, options) : client.completion(settings, options);
       };
       try {
-        timer = setTimeout(() => { expired = true; job.controller.abort(); }, timeoutMs);
+        arm('timeout');
+        capTimer = setTimeout(() => expire('overtime'), cap);
         const started = Date.now();
         const result = await Promise.race([work(), aborted]);
         return query ? { ok: true, result, revision } : { ok: true, elapsedMs: Date.now() - started };
       } finally {
         clearTimeout(timer);
+        clearTimeout(capTimer);
+        progress.flush();
         if (active === job) active = null;
       }
+    }
+    // 把查询进度发回发起请求的页面；按 250ms 节流，阶段变化立即发送。只发阶段、计数和答案预览，不含配置。
+    function relay(requestId, sender, query) {
+      const tabId = sender?.tab?.id;
+      const target = query && Number.isInteger(tabId) && typeof api.tabs?.sendMessage === 'function';
+      let last = 0, lastStage = '', pending = null, timer = null;
+      const post = update => {
+        last = Date.now(); lastStage = update.stage; pending = null;
+        const options = sender.documentId ? { frameId: 0, documentId: sender.documentId } : { frameId: 0 };
+        const preview = client.peek(update.text).slice(-1500);
+        api.tabs.sendMessage(tabId, { type: 'ai:progress', requestId, stage: update.stage, chars: update.chars, reasoning: update.reasoning, preview }, options).catch(() => {});
+      };
+      const send = update => {
+        if (!target) return;
+        clearTimeout(timer);
+        if (update.stage !== lastStage || Date.now() - last >= 250) { post(update); return; }
+        pending = update;
+        timer = setTimeout(() => pending && post(pending), 250 - (Date.now() - last));
+      };
+      send.flush = () => { clearTimeout(timer); pending = null; };
+      return send;
     }
     async function handle(message, sender) {
       try {

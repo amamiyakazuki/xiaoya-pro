@@ -262,7 +262,7 @@
       const tabId = await activeTabId();
       const result = await chrome.runtime.sendMessage({ type: 'start-selected', tabId, account, selection, options: requestOptions });
       if (result?.error) throw new Error(result.error);
-      if (!result?.ok) throw new Error('后台未确认请求，请到浏览器扩展管理页重新加载“小雅刷课助手”后再试。');
+      if (!result?.ok) throw new Error('后台未确认请求，请到浏览器扩展管理页重新加载“小雅助手 Pro”后再试。');
       setMessage('', context);
     } catch (error) {
       setMessage(error.message, context);

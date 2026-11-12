@@ -71,7 +71,7 @@
         const question = { id: subject.id, type, stem, options: [] };
         if (typeLabel) question.typeLabel = typeLabel;
         if (type === 'open') warnings.push(`“${typeLabel}”将按通用文字题解析，此题型尚未专项验证。`);
-        if (type === 'attachment') warnings.push('附件题仅生成可复制正文，不生成或上传文件；引用材料需完整提供。');
+        if (type === 'attachment') warnings.push('上传结果以本题附件列表为准；题目引用的材料需完整提供，AI 读不到外部文件。');
         if (['single', 'multiple', 'judgment'].includes(type)) {
           const labels = [...subject.querySelectorAll(type === 'multiple' ? 'label.ant-checkbox-wrapper' : 'label.ant-radio-wrapper')].filter(el => el.closest('.question') === current);
           question.options = labels.map((label, i) => {

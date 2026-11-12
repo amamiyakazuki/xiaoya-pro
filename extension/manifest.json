@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "小雅刷课助手",
+  "name": "小雅助手 Pro",
   "version": "0.6.0",
   "minimum_chrome_version": "120",
   "description": "小雅任务面板、视频与课件队列、个人 AI 答案和批量作答。",
