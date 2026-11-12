@@ -19,7 +19,6 @@ foreach ($target in $targets) {
     # Both browsers receive exactly the same extension code and permissions.
     Copy-Item -LiteralPath (Join-Path $projectRoot 'extension') -Destination $staging -Recurse
     Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $staging
-    Copy-Item -LiteralPath (Join-Path $projectRoot '使用说明.txt') -Destination $staging
     Copy-Item -LiteralPath (Join-Path $projectRoot 'CHANGELOG.md') -Destination $staging
     $browserName = if ($target -eq 'edge') { 'Microsoft Edge' } else { 'Google Chrome' }
     $managementUrl = if ($target -eq 'edge') { 'edge://extensions/' } else { 'chrome://extensions/' }
@@ -40,6 +39,6 @@ Chrome 与 Edge 使用同一套源码和权限。
     Set-Content -LiteralPath (Join-Path $staging "安装-$target.txt") -Value $instructions -Encoding utf8
     $filename = if ($target -eq 'edge') { "xiaoya-course-helper-edge-v$($manifest.version).zip" } else { "xiaoya-course-helper-v$($manifest.version).zip" }
     $destination = Join-Path $OutputDirectory $filename
-    Compress-Archive -LiteralPath @((Join-Path $staging 'extension'), (Join-Path $staging 'README.md'), (Join-Path $staging '使用说明.txt'), (Join-Path $staging 'CHANGELOG.md'), (Join-Path $staging "安装-$target.txt")) -DestinationPath $destination -Force
+    Compress-Archive -LiteralPath @((Join-Path $staging 'extension'), (Join-Path $staging 'README.md'), (Join-Path $staging 'CHANGELOG.md'), (Join-Path $staging "安装-$target.txt")) -DestinationPath $destination -Force
     [pscustomobject]@{ Browser = $browserName; Version = $manifest.version; Package = (Get-Item -LiteralPath $destination).FullName }
 }

@@ -35,6 +35,7 @@
 - [常见问题](#常见问题)
 - [更新扩展](#更新扩展)
 - [开发](#开发)
+- [参与贡献](#参与贡献)
 - [致谢](#致谢)
 - [许可证](#许可证)
 - [免责声明](#免责声明)
@@ -310,6 +311,10 @@ npm test
 ```
 
 输出在 `dist/`，该目录不提交到 Git。
+
+## 参与贡献
+
+欢迎提 [Issue](https://github.com/amamiyakazuki/xiaoya-pro/issues) 和 [Pull Request](https://github.com/amamiyakazuki/xiaoya-pro/pulls)，有问题或想法都可以聊聊～
 
 ## 致谢
 
