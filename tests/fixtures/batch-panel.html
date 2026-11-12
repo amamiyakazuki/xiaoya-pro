@@ -48,8 +48,12 @@
       <ol id="answerConfirmList"></ol>
       <div class="answer-actions"><button id="answerBack">返回修改</button><button id="answerGo">确认，开始作答并提交</button></div>
     </dialog>
-    <dialog id="aggressiveConfirm" aria-labelledby="aggressiveConfirmText">
-      <p id="aggressiveConfirmText">本次操作不会增加学习时长</p>
+    <dialog id="aggressiveConfirm" aria-labelledby="aggressiveConfirmTitle" aria-describedby="aggressiveConfirmText">
+      <h3 id="aggressiveConfirmTitle">开启激进模式？</h3>
+      <ul id="aggressiveConfirmText">
+        <li>部分视频和文档任务可立即完成。</li>
+        <li>通过此模式完成的任务不会增加相应的学习时长。</li>
+      </ul>
       <div class="aggressive-actions"><button id="aggressiveCancel" type="button">取消</button><button id="aggressiveEnable" type="button">开启</button></div>
     </dialog>
     <div class="scroller" id="scroller">
@@ -93,7 +97,7 @@
             <div class="queue-state" aria-live="polite"><div class="queue-head"><strong id="queueStatus" data-queue-status>尚未开始</strong><span id="queueCount" data-queue-count></span></div><ol id="queueLogs"></ol></div>
             <p class="video-message" data-video-message role="status" aria-live="polite"></p>
           </div>
-          <p class="note">先在列表逐项勾选，点击开始后立即按当前清单启动。请保持当前小雅页面已登录，并勿在运行中刷新或关闭。</p>
+          <p class="note">在列表勾选后点「开始刷课」。请保持小雅登录和刷课标签页开启。</p>
         </div>
       </div>
     </section>

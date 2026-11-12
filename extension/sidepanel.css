@@ -196,7 +196,9 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .aggressive-actions #aggressiveEnable { background:#a77b1a; border-color:#a77b1a; color:white; }
 #aggressiveConfirm { width:calc(100% - 32px); max-width:360px; border:1px solid #d8c996; border-radius:12px; padding:18px; background:#fffdf7; color:#443819; }
 #aggressiveConfirm::backdrop { background:rgba(20,40,60,.4); }
-#aggressiveConfirm p { margin:0 0 18px; font-size:14px; line-height:1.6; }
+#aggressiveConfirm h3 { margin:0 0 10px; font-size:16px; }
+#aggressiveConfirm ul { margin:0 0 18px; padding-inline-start:19px; font-size:14px; line-height:1.6; }
+#aggressiveConfirm li + li { margin-top:6px; }
 .video-message:empty { display:none; }
 .video-message { margin:5px 10px 8px; color:#9b4d20; font-size:12px; white-space:pre-line; overflow-wrap:anywhere; }
 .answer-toolbar { padding:8px 14px; border-bottom:1px solid #d6e5f0; background:#eff7fc; font-size:12px; }

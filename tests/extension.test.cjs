@@ -318,7 +318,7 @@ test('video selection starts directly from both entries and aggressive mode requ
         async get(key) { return key === 'options' ? { options: { rate: 1.25, autoNext: false } } : { xiaoyaAnswerBatch: { enabled: true } }; },
         async set() { localWrites++; }
       },
-      session: { async get() { return { xiaoyaRun: run, xiaoyaPendingScan: pending }; } },
+      session: { async get() { return { xiaoyaRun: run, xiaoyaPendingScan: pending, xiaoyaError: startError && { tabId: 7, text: startError } }; } },
       onChanged: { addListener(callback) { onChanged = callback; } }
     },
     runtime: {
@@ -411,7 +411,13 @@ test('video selection starts directly from both entries and aggressive mode requ
   starts[1].click();
   await flush();
   assert.equal(messages.at(-1).type, 'start-selected');
-  assert.deepEqual([...document.querySelectorAll('[data-video-message]')].map(node => node.textContent), [startError, startError]);
+  assert.deepEqual([...document.querySelectorAll('[data-video-message]')].map(node => node.textContent), ['', startError], 'a settings-start error appears only beside the settings entry');
+  assert.ok(statuses().every(status => status !== startError), 'a startup error does not replace the queue status');
+  startError = '快捷入口暂时无法启动';
+  starts[0].click();
+  await flush();
+  assert.deepEqual([...document.querySelectorAll('[data-video-message]')].map(node => node.textContent), [startError, ''], 'a quick-start error appears only beside the quick entry');
+  assert.ok(statuses().every(status => status !== startError), 'a stored startup error is never repeated in the queue status');
   startError = null;
 
   const toggle = document.getElementById('optAggressive');
@@ -424,7 +430,10 @@ test('video selection starts directly from both entries and aggressive mode requ
   toggleChange();
   assert.equal(toggle.checked, false, 'the toggle stays off until positive opt-in');
   assert.equal(dialog.open, true);
-  assert.equal(document.getElementById('aggressiveConfirmText').textContent, '本次操作不会增加学习时长');
+  assert.deepEqual([...document.querySelectorAll('#aggressiveConfirmText li')].map(item => item.textContent), [
+    '部分视频和文档任务可立即完成。',
+    '通过此模式完成的任务不会增加相应的学习时长。'
+  ]);
   document.getElementById('aggressiveCancel').click();
   assert.equal(toggle.checked, false, 'cancel leaves aggressive mode off');
   assert.equal(dialog.open, false);

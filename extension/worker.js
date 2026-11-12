@@ -128,6 +128,7 @@ async function validateSelection(selection, account) {
   const ids = selection.map(target => target?.id);
   if (ids.some(id => typeof id !== 'string' || !id) || new Set(ids).size !== ids.length) throw Error('清单中有重复或无法定位的任务，请重新选择。');
   const snapshot = await answerStore.load({ force: true });
+  if (['site-closed', 'login-required'].includes(snapshot.status)) throw Error('请先在浏览器打开并登录小雅，再开始刷课。');
   if (!account || snapshot.status !== 'ok' || snapshot.stale || snapshot.account !== account) throw Error('无法确认当前小雅账号，请刷新任务后重新选择。');
   const byId = new Map(), nodeCounts = new Map();
   for (const task of snapshot.tasks) {
@@ -156,19 +157,25 @@ async function navigateSelected(tab, target) {
   else await chrome.tabs.update(tab.id, { url: target.url });
 }
 
+function canReuseSelectedTab(tab) {
+  if (!tab?.url || tab.pendingUrl || isAnswerTab(tab)) return false;
+  const url = new URL(tab.url);
+  return url.origin === new URL(HOME).origin && /^\/app\/jx-web\/mycourse(?:\/\d+(?:\/resource(?:\/.*)?)?)?\/?$/.test(url.pathname);
+}
+
 async function startSelected(message, sender, stored) {
   if (!answerPanel(sender)) throw Error('请从任务面板启动视频课件队列。');
   if (stored?.enabled || (await chrome.storage.session.get(PENDING))[PENDING]) throw Error('已有视频课件队列或待办扫描正在运行，请先停止。');
   const selection = await validateSelection(message.selection, message.account);
-  const tab = await chrome.tabs.get(message.tabId);
-  if (isAnswerTab(tab)) throw Error('这是答题执行页，请切到用于刷课的小雅首页或课程资源页。');
-  const url = new URL(tab.pendingUrl || tab.url || 'about:blank');
-  const resource = /^\/app\/jx-web\/mycourse\/[^/]+\/resource\//.test(url.pathname);
-  if (!isHome(url.href) && !(url.origin === new URL(HOME).origin && resource)) throw Error('请登录小雅并打开“我的课程”首页，或课程资源页面。');
+  const source = Number.isInteger(message.tabId) ? await chrome.tabs.get(message.tabId).catch(() => null) : null;
+  const reuse = canReuseSelectedTab(source);
+  // Set the queue state before loading the resource, so its new document can attach immediately.
+  const tab = reuse ? source : await chrome.tabs.create({ url: 'about:blank', active: false,
+    ...(source?.windowId === undefined ? {} : { windowId: source.windowId }) });
   const options = message.options || {};
   const aggressive = options.aggressive === true;
   const protectedTab = !aggressive && options.background === true;
-  const run = { mode: 'selected', id: crypto.randomUUID(), tabId: tab.id, sourceTabId: tab.id, enabled: true,
+  const run = { mode: 'selected', id: crypto.randomUUID(), tabId: tab.id, sourceTabId: source?.id ?? tab.id, enabled: true,
     protectedTab, originalAutoDiscardable: tab.autoDiscardable, account: message.account, selection, selectionIndex: 0,
     pageDocumentId: null, pageRequestedAt: Date.now(), completed: [], logs: [], started: Date.now(),
     status: `正在打开：${selection[0].name}`,
@@ -176,13 +183,15 @@ async function startSelected(message, sender, stored) {
       background: protectedTab, muted: options.muted === true, autoNext: options.autoNext !== false, aggressive } };
   try {
     if (protectedTab) await chrome.tabs.update(tab.id, { autoDiscardable: false });
-    if (isAnswerTab(tab)) throw Error('这是答题执行页，请切到用于刷课的小雅首页或课程资源页。');
     await chrome.storage.session.remove('xiaoyaError');
     await chrome.storage.session.set({ [KEY]: run });
-    await navigateSelected(tab, selection[0]);
+    const destination = await chrome.tabs.get(tab.id);
+    if (reuse && (!canReuseSelectedTab(destination) || destination.url !== tab.url)) throw Error('当前课程页已切换，请再点一次开始刷课。');
+    await navigateSelected(destination, selection[0]);
   } catch (error) {
     await chrome.storage.session.remove(KEY);
-    await releasePage(run);
+    if (reuse) await releasePage(run);
+    else await chrome.tabs.remove(tab.id).catch(() => {});
     throw error;
   }
   return { ok: true };

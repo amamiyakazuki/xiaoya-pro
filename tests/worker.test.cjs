@@ -5,15 +5,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const taskData = require('../extension/task-data.js');
 
-function worker({ connected = false, injectionFails = false, runReply = { ok: true }, url = 'https://whut.ai-augmented.com/app/jx-web/mycourse', loggedInHome = true, otherTabs = [], snapshot } = {}) {
+function worker({ connected = false, injectionFails = false, runReply = { ok: true }, url = 'https://whut.ai-augmented.com/app/jx-web/mycourse', loggedInHome = true, otherTabs = [], snapshot, navigationFails = false } = {}) {
   let listener, alarm, account = snapshot?.account;
   const data = {};
   const injected = [];
   const requests = [];
   const created = [];
   const updates = [];
+  const removed = [];
   const recipients = [];
-  const tabs = new Map([[1, { id: 1, url, status: 'complete' }], ...otherTabs.map(tab => [tab.id, tab])]);
+  const tabs = new Map([[1, { id: 1, windowId: 3, url, status: 'complete' }], ...otherTabs.map(tab => [tab.id, tab])]);
   const context = vm.createContext({ URL, setTimeout, clearTimeout, crypto: { randomUUID() { return 'new-run'; } },
     chrome: {
       alarms: { create() {}, onAlarm: { addListener(fn) { alarm = fn; } } },
@@ -32,8 +33,13 @@ function worker({ connected = false, injectionFails = false, runReply = { ok: tr
         async get(id) { return { ...tabs.get(id) }; },
         async query() { return [...tabs.values()].filter(tab => tab.url.startsWith('https://whut.ai-augmented.com/')); },
         async create(options) { created.push(options); const tab = { id: 2, url: options.url, status: 'loading' }; tabs.set(2, tab); return tab; },
-        async update(id, options) { updates.push({ id, ...options }); Object.assign(tabs.get(id), options); },
+        async update(id, options) {
+          if (options.url && navigationFails) throw new Error('navigation failed');
+          updates.push({ id, ...options });
+          Object.assign(tabs.get(id), options);
+        },
         async reload(id) { updates.push({ id, reload: true }); },
+        async remove(id) { removed.push(id); tabs.delete(id); },
         onUpdated: { addListener() {}, removeListener() {} },
         async sendMessage(tabId, message) {
           requests.push(message.type);
@@ -51,7 +57,7 @@ function worker({ connected = false, injectionFails = false, runReply = { ok: tr
     async currentAccount() { return account; }
   }) };
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../extension/worker.js'), 'utf8'), context);
-  return { data, injected, requests, created, updates, recipients,
+  return { data, injected, requests, created, updates, recipients, removed,
     tick: () => alarm({ name: 'xiaoya-tick' }),
     setAccount(value) { account = value; },
     setPage(id, nextUrl, loggedIn) { tabs.set(id, { id, url: nextUrl, status: 'complete' }); loggedInHome = loggedIn; },
@@ -262,4 +268,46 @@ test('selected worker enables aggressive mode only with an explicit boolean and 
     assert.equal(f.data.xiaoyaRun.options.background, aggressive !== true);
     assert.equal(f.updates.some(update => update.autoDiscardable === false), aggressive !== true);
   }
+});
+
+test('selected queue starts from another site or paper without replacing the source tab', async () => {
+  const sources = ['https://example.com/', 'https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/1/2/3/4'];
+  for (const [index, url] of sources.entries()) {
+    const f = worker({ url, snapshot: mediaSnapshot });
+    const response = await f.send({ ...selectedStart, options: { aggressive: index === 1 } }, panelSender);
+    assert.equal(response.ok, true);
+    assert.equal(f.created.length, 1);
+    assert.equal(f.created[0].active, false);
+    assert.equal(f.created[0].windowId, 3);
+    assert.deepEqual(f.updates, [{ id: 2, url: selectedTargets[0].url }]);
+    assert.equal(f.data.xiaoyaRun.sourceTabId, 1);
+    assert.equal(f.data.xiaoyaRun.tabId, 2);
+    const wrongTab = await f.send(pageGet, pageSender(selectedTargets[0], 'first'));
+    const rightTab = await f.send(pageGet, { ...pageSender(selectedTargets[0], 'first'), tab: { id: 2 } });
+    assert.equal(wrongTab.run, null);
+    assert.equal(rightTab.run.options.aggressive, index === 1);
+    await f.send({ type: 'stop', tabId: 2 });
+    assert.equal(f.data.xiaoyaRun.enabled, false);
+    assert.equal(f.recipients.at(-1), 2);
+  }
+});
+
+test('selected queue reuses a course root page and checks login before opening any tab', async () => {
+  const root = worker({ url: 'https://whut.ai-augmented.com/app/jx-web/mycourse/42/', snapshot: mediaSnapshot });
+  assert.equal((await root.send(selectedStart, panelSender)).ok, true);
+  assert.deepEqual(root.created, []);
+  assert.deepEqual(root.updates, [{ id: 1, url: selectedTargets[0].url }]);
+
+  const loggedOut = worker({ url: 'https://example.com/', snapshot: { status: 'login-required' } });
+  assert.match((await loggedOut.send(selectedStart, panelSender)).error, /打开并登录小雅/);
+  assert.deepEqual(loggedOut.created, []);
+  assert.equal(loggedOut.data.xiaoyaRun, undefined);
+});
+
+test('selected queue closes its temporary tab and clears startup state if fallback navigation fails', async () => {
+  const f = worker({ url: 'https://example.com/', snapshot: mediaSnapshot, navigationFails: true });
+  assert.match((await f.send(selectedStart, panelSender)).error, /navigation failed/);
+  assert.equal(f.data.xiaoyaRun, undefined);
+  assert.deepEqual(f.removed, [2]);
+  assert.deepEqual(f.updates, []);
 });

@@ -11,7 +11,6 @@
   const statusLabels = [...document.querySelectorAll('[data-queue-status]')];
   const countLabels = [...document.querySelectorAll('[data-queue-count]')];
   let options = { ...DEFAULTS };
-  let lastTabId = null;
   let starting = false;
   let selectionAccount = state.account;
   let selected = new Map();
@@ -19,10 +18,13 @@
   let pendingAggressiveOptIn = false;
 
   const activeTabId = async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id;
-  const readState = () => chrome.storage.session.get(['xiaoyaRun', 'xiaoyaError', 'xiaoyaPendingScan']);
+  const readState = () => chrome.storage.session.get(['xiaoyaRun', 'xiaoyaPendingScan']);
   const saveOptions = () => chrome.storage.local.set({ options });
   const setStatus = status => statusLabels.forEach(label => { label.textContent = status; });
-  const setMessage = message => document.querySelectorAll('[data-video-message]').forEach(label => { label.textContent = message; });
+  const setMessage = (message, context = null) => document.querySelectorAll('[data-video-message]').forEach(label => {
+    const labelContext = label.closest('#videoActions') ? 'quick' : 'settings';
+    label.textContent = !context || context === labelContext ? message : '';
+  });
   const escapeHtml = value => String(value ?? '').replace(/[&<>\"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
   const isMedia = task => Number(task?.typeCode) === 1 || task?.type === '视频课件';
   const mediaTarget = task => {
@@ -158,7 +160,6 @@
     const tabId = await activeTabId();
     let status = activeRun ? `${activeRun.tabId !== tabId ? '小雅后台运行：' : ''}${activeRun.status || '等待页面响应…'}` : '尚未开始';
     if (activePending) status = activePending.status;
-    if (stored.xiaoyaError && stored.xiaoyaError.tabId === lastTabId) status = stored.xiaoyaError.text;
     const running = Boolean(activeRun?.enabled);
     const current = activeRun?.current || activeRun?.selection?.[activeRun?.selectionIndex];
     if (running && current?.name && !String(status).includes(current.name)) status = `${status} · ${current.name}`;
@@ -175,12 +176,13 @@
     renderSelection();
   }
 
-  async function startQueue() {
+  async function startQueue(context) {
     syncSelection();
     if (starting || isLocked()) return;
+    setMessage('');
     const account = state.account;
     const ids = [...selected.keys()];
-    if (!account) { setMessage('请先登录小雅并刷新任务。'); return; }
+    if (!account) { setMessage('请先登录小雅并刷新任务。', context); return; }
     if (!ids.length) return;
 
     // Freeze the checked IDs, canonical targets and options synchronously at the click.
@@ -190,28 +192,25 @@
     if (rows.length !== ids.length || issues.length) {
       const details = issues.map(row => `${row.target?.name || row.task?.name || '所选项目'}：${row.problem || '缺少可定位的任务身份'}`);
       if (rows.length !== ids.length) details.push('所选清单已变化，请刷新任务后重新选择。');
-      setMessage(details.join('\n') || '所选清单已变化，请刷新任务后重新选择。');
+      setMessage(details.join('\n') || '所选清单已变化，请刷新任务后重新选择。', context);
       return;
     }
     const selection = rows.map(row => ({ ...row.target }));
     const requestOptions = { ...options, aggressive };
     starting = true;
-    setMessage('正在向后台核对账号和所选任务…');
+    setMessage('正在向后台核对账号和所选任务…', context);
     renderSelection();
-    let failure;
     try {
-      lastTabId = await activeTabId();
-      const result = await chrome.runtime.sendMessage({ type: 'start-selected', tabId: lastTabId, account, selection, options: requestOptions });
+      const tabId = await activeTabId();
+      const result = await chrome.runtime.sendMessage({ type: 'start-selected', tabId, account, selection, options: requestOptions });
       if (result?.error) throw new Error(result.error);
       if (!result?.ok) throw new Error('后台未确认请求，请到浏览器扩展管理页重新加载“小雅刷课助手”后再试。');
-      setMessage('');
+      setMessage('', context);
     } catch (error) {
-      failure = error.message;
-      setMessage(failure);
+      setMessage(error.message, context);
     } finally {
       starting = false;
       await render();
-      if (failure) setMessage(failure);
     }
   }
 
@@ -293,10 +292,17 @@
     aggressive = false;
     get('optAggressive').checked = false;
   });
-  startButtons.forEach(button => button.addEventListener('click', () => startQueue().catch(error => setMessage(error.message))));
-  stopButtons.forEach(button => button.addEventListener('click', () => stopQueue().catch(error => setMessage(error.message))));
+  const buttonContext = button => button.closest('#videoActions') ? 'quick' : 'settings';
+  startButtons.forEach(button => button.addEventListener('click', () => {
+    const context = buttonContext(button);
+    startQueue(context).catch(error => setMessage(error.message, context));
+  }));
+  stopButtons.forEach(button => button.addEventListener('click', () => {
+    const context = buttonContext(button);
+    stopQueue().catch(error => setMessage(error.message, context));
+  }));
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'session' && (changes.xiaoyaRun || changes.xiaoyaError || changes.xiaoyaPendingScan)) render();
+    if (area === 'session' && (changes.xiaoyaRun || changes.xiaoyaPendingScan)) render();
   });
 
   (async () => {
