@@ -335,6 +335,25 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.status === 'complete' && tab.url?.startsWith(`${model.ORIGIN}/`) && (state.status === 'site-closed' || state.status === 'login-required')) update(false);
 });
 
+// 视频课件队列直接提交完成状态后，用后台返回的权威结果刷新面板，避免再整轮请求。
+globalThis.XiaoyaPanelRefresh = async snapshot => {
+  if (snapshot) await applyResult(snapshot);
+  renderAll(false);
+};
+// 批次进行中的乐观标记：后台确认一条就先把这条从待完成里移走。
+globalThis.XiaoyaPanelMarkDone = ids => {
+  const done = new Set(ids);
+  let changed = false;
+  state.tasks = state.tasks.map(task => {
+    if (!done.has(task.id) || task.finished) return task;
+    changed = true;
+    return { ...task, finished: true, finishedAt: Date.now() };
+  });
+  if (changed) renderAll(false);
+};
+// 批次进行中按节流重新向平台读取，已完成或早先的作业、测验也会跟着更新。
+globalThis.XiaoyaPanelRefreshData = () => update(true);
+
 async function boot() {
   const prefs = (await chrome.storage.local.get(PREFS_KEY))[PREFS_KEY];
   if (VIEWS.some(([key]) => key === prefs?.view)) state.view = prefs.view;

@@ -191,6 +191,13 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .video-aggressive { display:flex; align-items:center; gap:7px; padding:5px 11px 7px; color:#76571a; font-size:12px; cursor:pointer; }
 .video-aggressive input { margin:0; accent-color:#b07916; }
 .video-aggressive input:disabled { opacity:.5; cursor:default; }
+#finishConfirm { width:calc(100% - 32px); max-width:420px; max-height:85vh; border:1px solid #d8b3a6; border-radius:12px; padding:18px; background:#fffaf7; color:#44301f; }
+#finishConfirm::backdrop { background:rgba(20,40,60,.4); }
+#finishConfirm h3 { margin:0 0 10px; font-size:16px; }
+#finishConfirm p { font-size:13px; line-height:1.6; }
+#finishConfirmList { max-height:38vh; overflow:auto; padding-left:20px; }
+#finishConfirmList li { padding:5px 0; }
+#finishConfirmList span { display:block; color:#7b6350; font-size:12px; }
 .aggressive-actions { display:flex; justify-content:flex-end; gap:8px; }
 .aggressive-actions button { border:1px solid #d8c996; border-radius:7px; background:white; padding:6px 10px; font:inherit; cursor:pointer; }
 .aggressive-actions #aggressiveEnable { background:#a77b1a; border-color:#a77b1a; color:white; }

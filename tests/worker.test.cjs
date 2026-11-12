@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const taskData = require('../extension/task-data.js');
 
-function worker({ connected = false, injectionFails = false, runReply = { ok: true }, url = 'https://whut.ai-augmented.com/app/jx-web/mycourse', loggedInHome = true, otherTabs = [], snapshot, navigationFails = false } = {}) {
+function worker({ connected = false, injectionFails = false, runReply = { ok: true }, url = 'https://whut.ai-augmented.com/app/jx-web/mycourse', loggedInHome = true, otherTabs = [], snapshot, navigationFails = false, errorStorageFails = false } = {}) {
   let listener, alarm, account = snapshot?.account;
   const data = {};
   const injected = [];
@@ -21,7 +21,10 @@ function worker({ connected = false, injectionFails = false, runReply = { ok: tr
       runtime: { id: 'test', getURL: name => `chrome-extension://test/${name}`, onMessage: { addListener(fn) { listener = fn; } } },
       storage: { session: {
         async get() { return structuredClone(data); },
-        async set(value) { Object.assign(data, structuredClone(value)); },
+        async set(value) {
+          if (errorStorageFails && value.xiaoyaError) throw new Error('session storage unavailable');
+          Object.assign(data, structuredClone(value));
+        },
         async remove(key) { delete data[key]; }
       } },
       scripting: { async executeScript(options) {
@@ -241,6 +244,14 @@ test('selected worker rejects changed, duplicate, finished or wrong-account task
     assert.equal(f.data.xiaoyaRun, undefined);
     assert.deepEqual(f.updates, []);
   }
+});
+
+test('selected worker reports startup failure even when its error record cannot be written', async () => {
+  const f = worker({ snapshot: mediaSnapshot, errorStorageFails: true });
+  const rejected = await f.send({ ...selectedStart, account: 'other' }, panelSender);
+  assert.match(rejected.error, /无法确认当前小雅账号/);
+  assert.deepEqual(f.updates, []);
+  assert.equal((await f.send(selectedStart, panelSender)).ok, true);
 });
 
 test('selected worker stops after account change or manual stop and rejects late page writes', async () => {

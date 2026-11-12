@@ -28,9 +28,11 @@
     $('answerStop').hidden = !starting && !batch?.enabled;
     $('answerVerify').hidden = !batch?.inFlight || Boolean(batch?.enabled);
     const same = batch && batch.account === state.account;
+    const keepToolbar = count > 0 || starting || Boolean(batch?.enabled || batch?.inFlight) || openingCurrentDraft();
+    $('answerToolbar').hidden = state.chip === 'media' && !keepToolbar;
     $('answerProgress').hidden = !same;
     if (same) {
-      $('answerStage').textContent = batch.stage === 'finished' ? '本批处理完成，可以开始新批次。' : batch.message;
+      $('answerStage').textContent = batch.stage === 'finished' ? '本批答题处理结束，可以开始下一批。' : batch.message;
       $('answerResults').innerHTML = batch.tasks.map((task, index) => {
         const result = batch.results[index];
         const label = ({ waiting: '等待', done: '已提交', draft: '待补附件', pending: '待处理', uncertain: '待核对' })[result.status] || '等待';

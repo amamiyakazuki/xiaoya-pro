@@ -64,6 +64,51 @@ async function handleAnswer(message, sender, ticket) {
   throw Error('未知批次操作。');
 }
 
+// 直接提交完成状态：只在激进模式下可用，仅处理自主观看（task_type 1）且仍未完成、未截止的任务。
+async function finishSubmit(message, sender) {
+  if (!answerPanel(sender)) throw Error('只能从任务面板提交完成状态。');
+  if (message.aggressive !== true) throw Error('请先开启激进模式。');
+  const { finishProblem } = globalThis.XiaoyaTaskData;
+  const selection = message.selection;
+  if (!Array.isArray(selection) || !selection.length || selection.length > 200) throw Error('请选择 1–200 项。');
+  if (selection.some(item => typeof item?.id !== 'string' || !item.id) || new Set(selection.map(item => item.id)).size !== selection.length) {
+    throw Error('清单中有重复或无法定位的任务，请重新选择。');
+  }
+  const snapshot = await answerStore.load();
+  if (snapshot.status !== 'ok' || snapshot.account !== message.account) throw Error('无法确认当前账号，请刷新任务后重试。');
+  const tasks = selection.map(item => {
+    const task = snapshot.tasks.find(row => row.id === item.id);
+    if (!task) throw Error('清单中的任务已变化，请刷新后重新选择。');
+    if (['courseId', 'nodeId', 'taskId', 'name'].some(key => String(task[key] ?? '') !== String(item[key] ?? ''))) {
+      throw Error(`「${item.name || task.name}」任务身份已变化，请刷新清单后重选。`);
+    }
+    const problem = finishProblem(task);
+    if (problem) throw Error(`「${task.name}」${problem}`);
+    return task;
+  });
+  const results = [];
+  for (const task of tasks) {
+    try {
+      const outcome = await answerStore.finishTask(task, snapshot.account);
+      results.push({ id: task.id, name: task.name, status: outcome.status });
+    } catch (error) {
+      results.push({ id: task.id, name: task.name, status: 'failed', message: error.message || '提交失败。' });
+    }
+    // 逐条通知面板，让列表在批次进行中就跟着更新，而不是等全部结束。
+    const ping = chrome.runtime.sendMessage?.({ type: 'finish:progress', total: tasks.length, done: results.length,
+      id: task.id, status: results[results.length - 1].status });
+    if (ping?.catch) ping.catch(() => {});
+  }
+  // 用一次权威刷新确认平台是否真的记成完成；失败时不影响已提交的结果。
+  let after = null;
+  try { after = await answerStore.load({ force: true }); } catch { after = null; }
+  if (after?.status === 'ok') {
+    const done = new Set(after.tasks.filter(task => task.finished).map(task => task.id));
+    for (const row of results) if (row.status !== 'failed') row.verified = done.has(row.id);
+  }
+  return { ok: true, results, snapshot: after?.status === 'ok' ? after : null };
+}
+
 chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 const KEY = 'xiaoyaRun';
 chrome.alarms.create('xiaoya-tick', { periodInMinutes: 0.5 });
@@ -287,6 +332,7 @@ async function handle(message, sender) {
       return { run: stored };
     }
     if (message.type === 'start-selected') return startSelected(message, sender, stored);
+    if (message.type === 'finish-submit') return finishSubmit(message, sender);
     if (message.type === 'selected-advance') return advanceSelected(stored, message, sender);
     if (message.type === 'start' || message.type === 'scan-resume') {
       const tab = await chrome.tabs.get(message.tabId);
@@ -371,10 +417,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     else reply({ ok: false, error: 'AI 模块尚未加载，请重新加载扩展。' });
     return true;
   }
-  if (!['get', 'start', 'start-selected', 'selected-advance', 'scan', 'login-ready', 'save', 'stop'].includes(message?.type)) return;
+  if (!['get', 'start', 'start-selected', 'finish-submit', 'selected-advance', 'scan', 'login-ready', 'save', 'stop'].includes(message?.type)) return;
   videoCommands = videoCommands.then(() => handle(message, sender)).then(reply, async error => {
     const failure = { text: error.message, tabId: message.tabId ?? sender.tab?.id, at: Date.now() };
-    await chrome.storage.session.set({ xiaoyaError: failure });
+    await chrome.storage.session.set({ xiaoyaError: failure }).catch(() => {});
     reply({ error: error.message });
   });
   return true;

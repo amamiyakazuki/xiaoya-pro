@@ -6,6 +6,7 @@
   const DEFAULTS = { rate: 2, background: true, muted: true, recursive: true, autoNext: true };
   const SWITCHES = { background: 'optBackground', muted: 'optMuted', autoNext: 'optAutoNext' };
   const RATES = [1, 1.25, 1.5, 2];
+  const STARTING_STATUS = '正在核对账号和所选任务…';
   const startButtons = [...document.querySelectorAll('[data-queue-start]')];
   const stopButtons = [...document.querySelectorAll('[data-queue-stop]')];
   const statusLabels = [...document.querySelectorAll('[data-queue-status]')];
@@ -16,6 +17,26 @@
   let selected = new Map();
   let aggressive = false;
   let pendingAggressiveOptIn = false;
+  let finishing = false;
+  let finishContext = 'quick';
+  let lastDoneCount = 0;
+  let taskRefreshTimer = null;
+  let lastTaskRefresh = 0;
+  const TASK_REFRESH_MS = 12000;
+
+  // 批次进行中也让任务列表跟着平台走，避免已完成或很久以前的作业/测验一直挂在列表里。
+  function scheduleTaskRefresh() {
+    if (taskRefreshTimer) return;
+    // 第一次在 1.5 秒后刷新，之后按 12 秒节流，既跟得上前几条，也不至于频繁请求。
+    const elapsed = lastTaskRefresh ? Date.now() - lastTaskRefresh : TASK_REFRESH_MS - 1500;
+    const wait = Math.max(0, TASK_REFRESH_MS - elapsed);
+    taskRefreshTimer = setTimeout(() => {
+      taskRefreshTimer = null;
+      lastTaskRefresh = Date.now();
+      Promise.resolve(globalThis.XiaoyaPanelRefreshData?.()).catch(() => {});
+    }, wait);
+    taskRefreshTimer?.unref?.();
+  }
 
   const activeTabId = async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id;
   const readState = () => chrome.storage.session.get(['xiaoyaRun', 'xiaoyaPendingScan']);
@@ -105,6 +126,26 @@
     });
   }
 
+  // 直接提交完成状态的清单：必须是已勾选、身份完整、未完成且未截止的自主观看任务。
+  function finishTargets() {
+    const rows = selectedRows().filter(row => row.task);
+    if (rows.length !== selected.size) return { rows: [], problem: '所选清单已变化，请刷新任务后重新选择。' };
+    for (const row of rows) {
+      const problem = row.problem || String(taskData?.finishProblem?.(row.task) || '');
+      if (problem) return { rows: [], problem: `${row.task.name}：${problem}` };
+    }
+    return { rows, problem: '' };
+  }
+
+  // 激进模式下同一个开始按钮改为直接提交，这里的文案说明为什么暂时不能提交。
+  function finishBlockedReason() {
+    if (finishing) return '正在提交，请稍候';
+    if (isLocked()) return '队列运行中暂时不能直接完成任务';
+    if (!state.account) return '请先登录小雅并刷新任务';
+    if (!selected.size) return '先勾选要完成的视频课件';
+    return finishTargets().problem;
+  }
+
   function renderCheckbox(task) {
     if (!isMedia(task)) return '';
     const target = mediaTarget(task);
@@ -134,12 +175,19 @@
     const visibleIds = new Set(visibleMedia().map(task => mediaTarget(task)?.id).filter(Boolean));
     const hidden = [...selected.keys()].filter(id => !visibleIds.has(id)).length;
     const locked = isLocked();
-    get('videoActions').hidden = state.chip !== 'media' && !selected.size;
-    get('videoAll').hidden = state.chip !== 'media';
+    const videoChip = state.chip === 'media' || state.chip === 'all';
+    get('videoActions').hidden = !videoChip && !selected.size && !locked;
+    get('videoAll').hidden = !videoChip;
+    get('videoAll').textContent = state.chip === 'all' ? '全选视频/文档' : '全选';
     get('videoSelected').textContent = `已选 ${selected.size} 项${hidden ? `（筛选外 ${hidden} 项）` : ''}`;
     get('videoAll').disabled = locked || !state.account || !visibleMedia().some(task => !taskProblem(task));
     get('videoClear').disabled = locked || !selected.size;
-    startButtons.forEach(button => { button.disabled = locked || !selected.size || !state.account; });
+    const finishBlocked = aggressive ? finishBlockedReason() : '';
+    startButtons.forEach(button => {
+      button.disabled = locked || finishing || !selected.size || !state.account || Boolean(finishBlocked);
+      button.textContent = starting ? '正在启动…' : finishing ? '正在完成任务…' : aggressive ? '完成任务' : '开始刷课';
+      button.title = finishBlocked || (aggressive ? '直接提交完成状态，不打开播放页，也不增加学习时长' : '按勾选顺序打开任务并播放');
+    });
     stopButtons.forEach(button => { button.disabled = !activeRun?.enabled && !activePending; });
     get('optAggressive').checked = aggressive;
     get('optAggressive').disabled = locked;
@@ -158,15 +206,24 @@
     activeRun = stored.xiaoyaRun || null;
     activePending = stored.xiaoyaPendingScan || null;
     const tabId = await activeTabId();
-    let status = activeRun ? `${activeRun.tabId !== tabId ? '小雅后台运行：' : ''}${activeRun.status || '等待页面响应…'}` : '尚未开始';
+    let status;
+    if (activeRun) status = `${activeRun.tabId !== tabId ? '小雅后台运行：' : ''}${activeRun.status || '等待页面响应…'}`;
+    else if (aggressive) status = selected.size ? (finishBlockedReason() || '点「完成任务」直接提交') : '勾选后点「完成任务」直接提交';
+    else status = selected.size ? '尚未开始' : '先勾选视频或课件';
     if (activePending) status = activePending.status;
     const running = Boolean(activeRun?.enabled);
     const current = activeRun?.current || activeRun?.selection?.[activeRun?.selectionIndex];
     if (running && current?.name && !String(status).includes(current.name)) status = `${status} · ${current.name}`;
     if (running && activeRun?.options?.aggressive) status = `激进模式 · ${status}`;
-    setStatus(starting ? '正在启动所选队列…' : status);
+    setStatus(starting ? STARTING_STATUS : status);
     const total = activeRun?.selection?.length || 0;
     const completed = activeRun?.completed?.length || 0;
+    if (completed > lastDoneCount) scheduleTaskRefresh();
+    lastDoneCount = completed;
+    // 平台已确认完成的任务不再占着勾选清单。
+    for (const id of [...selected.keys()]) {
+      if (state.tasks.find(row => String(row.id) === String(id))?.finished) selected.delete(id);
+    }
     countLabels.forEach(label => { label.textContent = total ? `已完成 ${completed}/${total} 项` : `已完成 ${completed} 项`; });
     get('queueLogs').replaceChildren(...(activeRun?.logs || []).slice(-6).reverse().map(entry => {
       const item = document.createElement('li');
@@ -198,7 +255,7 @@
     const selection = rows.map(row => ({ ...row.target }));
     const requestOptions = { ...options, aggressive };
     starting = true;
-    setMessage('正在向后台核对账号和所选任务…', context);
+    setStatus(STARTING_STATUS);
     renderSelection();
     try {
       const tabId = await activeTabId();
@@ -262,10 +319,12 @@
     if (isLocked()) {
       aggressive = false;
       event.target.checked = false;
+      renderSelection();
       return;
     }
     if (!event.target.checked) {
       aggressive = false;
+      renderSelection();
       return;
     }
     event.target.checked = false;
@@ -280,27 +339,92 @@
     aggressive = !isLocked();
     get('optAggressive').checked = aggressive;
     get('aggressiveConfirm').close();
+    renderSelection();
   });
   get('aggressiveConfirm').addEventListener('cancel', () => {
     pendingAggressiveOptIn = false;
     aggressive = false;
     get('optAggressive').checked = false;
+    renderSelection();
   });
   get('aggressiveConfirm').addEventListener('close', () => {
     if (!pendingAggressiveOptIn) return;
     pendingAggressiveOptIn = false;
     aggressive = false;
     get('optAggressive').checked = false;
+    renderSelection();
   });
+
+  function finishQueue(context) {
+    const blocked = finishBlockedReason();
+    if (blocked) { setMessage(blocked, context); return; }
+    const { rows } = finishTargets();
+    get('finishConfirmList').replaceChildren(...rows.map(row => {
+      const item = document.createElement('li');
+      item.textContent = row.task.name;
+      const meta = document.createElement('span');
+      meta.textContent = `${row.task.courseName} · ${row.task.end === null ? '无截止时间' : `截止 ${new Date(row.task.end).toLocaleString('zh-CN')}`}`;
+      item.appendChild(meta);
+      return item;
+    }));
+    finishContext = context;
+    setMessage('', context);
+    get('finishConfirm').showModal();
+  }
+
+  async function submitFinished() {
+    if (finishing) return;
+    const blocked = finishBlockedReason();
+    const { rows, problem } = finishTargets();
+    get('finishConfirm').close();
+    const context = finishContext;
+    if (problem || blocked || !rows.length) {
+      setMessage(problem || blocked || '当前没有可提交的视频课件。', context);
+      return;
+    }
+    const selection = rows.map(row => ({ id: row.target.id, courseId: row.target.courseId, nodeId: row.target.nodeId,
+      taskId: row.task.taskId, name: row.target.name }));
+    finishing = true;
+    let applied = false;
+    renderSelection();
+    setMessage('正在提交，请勿关闭侧栏…', context);
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'finish-submit', tabId: await activeTabId(),
+        account: state.account, aggressive: true, selection });
+      if (result?.error) throw new Error(result.error);
+      if (!result?.ok) throw new Error('后台未确认请求，请到扩展管理页重新加载后再试。');
+      const verified = result.results.filter(row => row.verified).length;
+      const lines = result.results.map(row => `${row.name}：${row.status === 'failed' ? `失败 - ${row.message}`
+        : row.verified ? '已完成' : '已提交，状态待刷新'}`);
+      setMessage(`提交 ${result.results.length} 项，确认完成 ${verified} 项。\n${lines.join('\n')}`, context);
+      if (result.snapshot?.tasks) for (const task of result.snapshot.tasks) if (task.finished) selected.delete(task.id);
+      if (result.snapshot) { applied = true; await globalThis.XiaoyaPanelRefresh?.(result.snapshot); }
+    } catch (error) {
+      setMessage(error.message, context);
+    } finally {
+      finishing = false;
+      await render();
+      if (!applied) await Promise.resolve(globalThis.XiaoyaPanelRefreshData?.()).catch(() => {});
+    }
+  }
+
+  get('finishCancel').addEventListener('click', () => get('finishConfirm').close());
+  get('finishGo').addEventListener('click', () => { submitFinished().catch(error => setMessage(error.message, finishContext)); });
   const buttonContext = button => button.closest('#videoActions') ? 'quick' : 'settings';
   startButtons.forEach(button => button.addEventListener('click', () => {
     const context = buttonContext(button);
+    if (aggressive) { finishQueue(context); return; }
     startQueue(context).catch(error => setMessage(error.message, context));
   }));
   stopButtons.forEach(button => button.addEventListener('click', () => {
     const context = buttonContext(button);
     stopQueue().catch(error => setMessage(error.message, context));
   }));
+  chrome.runtime.onMessage?.addListener(message => {
+    if (message?.type !== 'finish:progress') return;
+    if (message.status !== 'failed' && message.id) globalThis.XiaoyaPanelMarkDone?.([message.id]);
+    scheduleTaskRefresh();
+  });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'session' && (changes.xiaoyaRun || changes.xiaoyaPendingScan)) render();
   });

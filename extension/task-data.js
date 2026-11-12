@@ -7,7 +7,8 @@
     unfinished: '/api/jx-stat/group/task/un_finish',
     courses: '/api/jx-iresource/group/student/groups?time_flag=1',
     notices: id => `/api/jx-stat/group/task/queryTaskNotices?group_id=${encodeURIComponent(id)}&role=1`,
-    resources: id => `/api/jx-iresource/resource/queryCourseResources?group_id=${encodeURIComponent(id)}`
+    resources: id => `/api/jx-iresource/resource/queryCourseResources?group_id=${encodeURIComponent(id)}`,
+    finish: '/api/jx-iresource/resource/finishActivity'
   };
   const CACHE_TTL_MS = 5 * 60 * 1000;
   const MAX_CONCURRENT_REQUESTS = 3;
@@ -46,6 +47,16 @@
     if (typeof task.id !== 'string' || !task.id || !/^\d+$/.test(String(task.courseId)) || !/^\d+$/.test(String(task.nodeId))
       || (task.resourceId && !/^[\w-]+$/.test(String(task.resourceId)))) return '无法定位具体课件';
     if (typeof task.name !== 'string' || !task.name.trim() || task.name === UNKNOWN_TASK_NAME) return '无法确认任务名称';
+    return '';
+  }
+
+  // 直接提交完成状态的前提：自主观看（task_type 1）、未完成、未到截止时间、标识齐全。
+  function finishProblem(task, now = Date.now()) {
+    if (task?.typeCode !== 1) return '此任务不属于视频课件。';
+    if (task.finished) return '已完成';
+    if (task.end !== null && task.end !== undefined && task.end <= now) return '已截止';
+    if (!/^\d+$/.test(String(task.courseId ?? '')) || !/^\d+$/.test(String(task.nodeId ?? ''))) return '无法定位具体任务';
+    if (!/^\d+$/.test(String(task.taskId ?? ''))) return '缺少任务 ID，无法提交';
     return '';
   }
 
@@ -158,6 +169,53 @@
       }).finally(() => { if (!fresh) inflight.delete(path); });
       if (!fresh) inflight.set(path, job);
       return job;
+    }
+
+    // 写接口不缓存、不并发合并；每次调用都是独立的 POST。
+    function post(path, token, payload) {
+      return limit(async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetchImpl(ORIGIN + path, {
+            method: 'POST',
+            credentials: 'include',
+            signal: controller.signal,
+            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
+            body: JSON.stringify(payload)
+          });
+          if (response.status === 401 || response.status === 403) throw new AuthRequiredError('登录已失效');
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return await response.json();
+        } finally {
+          clearTimeout(timer);
+        }
+      });
+    }
+
+    // 提交一条自主观看任务的完成状态；提交前按平台最新列表复核任务仍可提交。
+    async function finishTask(task, account) {
+      const problem = finishProblem(task, now());
+      if (problem) throw new Error(`「${task?.name || '任务'}」${problem}`);
+      const token = await getToken();
+      if (!token) throw new Error('请先登录小雅。');
+      const before = await request(PATHS.account, token, true);
+      if (String(before?.info?.id ?? '') !== String(account ?? '')) throw new Error('小雅账号已变化，请刷新任务后重试。');
+      const data = await request(PATHS.notices(task.courseId), token, true);
+      if (!Array.isArray(data?.student_tasks)) throw new Error('平台未返回可核对的任务状态，请稍后重试。');
+      const matched = data.student_tasks.filter(row => row && String(row.node_id) === String(task.nodeId)
+        && String(row.task_id) === String(task.taskId)
+        && (row.group_id == null || String(row.group_id) === String(task.courseId))
+        && Number(row.task_type) === 1);
+      if (matched.length !== 1) throw new Error('平台任务列表中找不到这条任务，可能已变化。');
+      if (Number(matched[0].finish) === 2) return { status: 'already' };
+      const end = parseTime(matched[0].end_time);
+      if (end !== null && end <= now()) throw new Error('已到截止时间。');
+      const body = await post(PATHS.finish, token, {
+        group_id: String(task.courseId), node_id: String(task.nodeId), task_id: String(task.taskId)
+      });
+      if (body?.success !== true) throw new Error(body?.message || '平台未确认完成。');
+      return { status: 'submitted' };
     }
 
     const readKey = async key => (await storage.get(key))[key];
@@ -291,7 +349,7 @@
     }
 
     return {
-      peek, load, refresh,
+      peek, load, refresh, finishTask,
       checkSubmitted: async (task, account) => {
         if (!account || !/^\d+$/.test(String(task?.courseId || '')) || !/^\d+$/.test(String(task?.nodeId || '')) || ![2, 3, 4].includes(task.typeCode)) throw new Error('无法确认待核对任务的身份。');
         const token = await getToken();
@@ -323,7 +381,7 @@
     };
   }
 
-  const api = { createTaskStore, normalizeTask, taskStatus, taskUrl, mediaProblem, mediaTarget,
+  const api = { createTaskStore, normalizeTask, taskStatus, taskUrl, mediaProblem, mediaTarget, finishProblem,
     readTabToken, readPageToken, CACHE_TTL_MS, MAX_CONCURRENT_REQUESTS };
   root.XiaoyaTaskData = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

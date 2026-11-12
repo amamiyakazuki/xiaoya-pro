@@ -40,7 +40,7 @@
       <div class="queue-state queue-head" role="status"><strong data-queue-status>尚未开始</strong><span data-queue-count></span></div>
       <p class="video-message" data-video-message role="status" aria-live="polite"></p>
     </section>
-    <section class="answer-toolbar" aria-label="整份任务自动作答">
+    <section class="answer-toolbar" id="answerToolbar" aria-label="整份任务自动作答">
       <div><strong id="answerSelected">已选 0 份</strong><button id="answerAll">选中筛选内任务</button><button id="answerClear">清空</button></div>
       <div><button id="answerReview" disabled>自动作答并提交…</button><button id="answerStop" hidden>停止</button><button id="answerVerify" hidden>核对提交结果</button></div>
       <p id="answerMessage" role="status"></p>
@@ -59,6 +59,11 @@
         <li>通过此模式完成的任务不会增加相应的学习时长。</li>
       </ul>
       <div class="aggressive-actions"><button id="aggressiveCancel" type="button">取消</button><button id="aggressiveEnable" type="button">开启</button></div>
+    </dialog>
+    <dialog id="finishConfirm" aria-labelledby="finishConfirmTitle">
+      <h3 id="finishConfirmTitle">确认要完成的任务</h3>
+      <ol id="finishConfirmList"></ol>
+      <div class="aggressive-actions"><button id="finishCancel" type="button">取消</button><button id="finishGo" type="button">确认</button></div>
     </dialog>
     <div class="scroller" id="scroller">
       <div class="notice" id="notice" hidden></div>

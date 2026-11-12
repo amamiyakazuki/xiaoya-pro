@@ -164,3 +164,89 @@ test('non-panel senders cannot request draft-page focus', async () => {
   assert.match(result.error, /只有任务面板/);
   assert.equal(f.calls.length, 0);
 });
+
+test('answer toolbar hides only when inactive on media filter and names a finished answer batch', async () => {
+  const { parseHTML } = require('linkedom');
+  const { document } = parseHTML(fs.readFileSync(require.resolve('../extension/sidepanel.html'), 'utf8'));
+  const model = require('../extension/panel-model.js');
+  const task = { ...draftTask, type: '作业', start: Date.now() - 1000, end: Date.now() + 86400000, finished: false, finishedAt: null };
+  const state = { account: 'account-a', tasks: [task], chip: 'media', tab: 'pending', query: '', day: null };
+  const filters = () => ({ tab: state.tab, chip: state.chip, query: state.query, day: state.day });
+  let batch = {
+    id: 'batch-a', account: 'account-a', stage: 'finished', message: '',
+    tasks: [task], results: [{ status: 'done', message: '已完成' }], enabled: false, inFlight: false
+  };
+  let onChanged, resolveDraft;
+  const draftReply = new Promise(resolve => { resolveDraft = resolve; });
+  const batchModel = {
+    KEY: 'xiaoyaAnswerBatch',
+    eligible: item => [2, 3, 4].includes(item.typeCode),
+    selection: (tasks, ids, account, previousAccount) => account === previousAccount
+      ? ids.filter(id => tasks.some(item => item.id === id && [2, 3, 4].includes(item.typeCode)))
+      : []
+  };
+  const chrome = {
+    runtime: { async sendMessage(message) {
+      if (message.type === 'auto:get') return { ok: true, batch: structuredClone(batch) };
+      if (message.type === 'auto:open-draft') return draftReply;
+      return { ok: true };
+    } },
+    storage: { onChanged: { addListener(callback) { onChanged = callback; } } }
+  };
+  const context = vm.createContext({
+    chrome, document, state, model, filters, XiaoyaAnswerBatch: batchModel, $: id => document.getElementById(id),
+    renderList() {}, update() {}, esc: value => String(value).replace(/[&<>\"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]))
+  });
+  vm.runInContext(fs.readFileSync(require.resolve('../extension/panel-answer.js'), 'utf8'), context);
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  await flush();
+  const toolbar = document.getElementById('answerToolbar');
+  const progress = document.getElementById('answerProgress');
+  assert.equal(toolbar.hidden, true, 'finished results do not occupy the video filter');
+
+  assert.equal(document.getElementById('answerStage').textContent, '本批答题处理结束，可以开始下一批。');
+  state.chip = 'all';
+  context.XiaoyaPanelAnswer.render();
+  assert.equal(toolbar.hidden, false, 'the previous answer result remains available in other filters');
+  assert.equal(progress.hidden, false);
+
+  state.chip = 'media';
+  const list = document.getElementById('list');
+  list.innerHTML = context.XiaoyaPanelAnswer.checkbox(task);
+  const input = list.querySelector('[data-answer-id]');
+  input.checked = true;
+  const change = document.createEvent('Event');
+  change.initEvent('change', true, true);
+  input.dispatchEvent(change);
+  assert.equal(toolbar.hidden, false, 'an answer selection keeps its controls accessible on media filter');
+  assert.equal(document.getElementById('answerReview').disabled, false);
+  input.checked = false;
+  const clear = document.createEvent('Event');
+  clear.initEvent('change', true, true);
+  input.dispatchEvent(clear);
+  assert.equal(toolbar.hidden, true);
+
+  batch = { ...batch, stage: 'answering', message: '正在答题…', enabled: true };
+  onChanged({ xiaoyaAnswerBatch: { newValue: batch } }, 'local');
+  assert.equal(toolbar.hidden, false, 'a running answer batch remains visible');
+  assert.equal(document.getElementById('answerStop').hidden, false);
+  batch = { ...batch, stage: 'waiting-receipt', enabled: false, inFlight: true, results: [{ status: 'uncertain', message: '等待回执' }] };
+  onChanged({ xiaoyaAnswerBatch: { newValue: batch } }, 'local');
+  assert.equal(toolbar.hidden, false, 'receipt verification remains accessible on media filter');
+  assert.equal(document.getElementById('answerVerify').hidden, false);
+
+  batch = { ...batch, stage: 'finished', inFlight: false, results: [{ status: 'draft', message: '待补附件', draftPage }] };
+  state.chip = 'all';
+  onChanged({ xiaoyaAnswerBatch: { newValue: batch } }, 'local');
+  const draftButton = document.querySelector('[data-draft-index="0"]');
+  assert.ok(draftButton);
+  draftButton.click();
+  state.chip = 'media';
+  context.XiaoyaPanelAnswer.render();
+  assert.equal(toolbar.hidden, false, 'returning to a draft keeps answer controls visible while in progress');
+  assert.match(document.querySelector('[data-draft-index="0"]').textContent, /正在定位原页面/);
+  resolveDraft({ ok: true });
+  await flush();
+  await flush();
+  assert.equal(toolbar.hidden, true, 'the toolbar hides again after the optional draft return ends');
+});

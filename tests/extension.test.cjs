@@ -295,7 +295,7 @@ test('video selection starts directly from both entries and aggressive mode requ
   const model = require(path.join(root, 'extension/panel-model.js'));
   const now = Date.now();
   const media = (id, courseId, nodeId, name, end, extra = {}) => ({
-    id, courseId, courseName: `课程 ${courseId}`, nodeId, resourceId: `r${nodeId}`,
+    id, taskId: String(900 + Number(nodeId)), courseId, courseName: `课程 ${courseId}`, nodeId, resourceId: `r${nodeId}`,
     typeCode: 1, type: '视频课件', name, finished: false, start: now - 1000, end, finishedAt: null, ...extra
   });
   const tasks = [
@@ -310,6 +310,7 @@ test('video selection starts directly from both entries and aggressive mode requ
   const filters = () => ({ tab: state.tab, chip: state.chip, query: state.query, day: state.day });
   const messages = [];
   let run, pending, onChanged, startError = null;
+  let startGate = null;
   let localWrites = 0;
   const chrome = {
     tabs: { async query() { return [{ id: 7 }]; } },
@@ -325,25 +326,32 @@ test('video selection starts directly from both entries and aggressive mode requ
       async sendMessage(message) {
         messages.push(structuredClone(message));
         if (message.type === 'start-selected') {
+          if (startGate) await startGate;
           if (startError) return { ok: false, error: startError };
           run = { mode: 'selected', tabId: 7, enabled: true, status: '运行中', selection: message.selection, selectionIndex: 0, completed: [], options: message.options };
         }
         if (message.type === 'stop') run = { ...run, enabled: false, status: '已停止' };
+        if (message.type === 'finish-submit') {
+          return { ok: true, results: message.selection.map(item => ({ id: item.id, name: item.name, status: 'submitted', verified: true })), snapshot: null };
+        }
         return { ok: true };
       }
     }
   };
   const dialog = document.getElementById('aggressiveConfirm');
-  Object.defineProperty(dialog, 'open', { get() { return this.hasAttribute('open'); }, set(value) { value ? this.setAttribute('open', '') : this.removeAttribute('open'); } });
-  dialog.showModal = () => { dialog.open = true; };
-  dialog.close = () => {
-    dialog.open = false;
-    const close = document.createEvent('Event');
-    close.initEvent('close', false, false);
-    dialog.dispatchEvent(close);
-  };
+  const finishDialog = document.getElementById('finishConfirm');
+  for (const item of [dialog, finishDialog]) {
+    Object.defineProperty(item, 'open', { get() { return this.hasAttribute('open'); }, set(value) { value ? this.setAttribute('open', '') : this.removeAttribute('open'); } });
+    item.showModal = () => { item.open = true; };
+    item.close = () => {
+      item.open = false;
+      const close = document.createEvent('Event');
+      close.initEvent('close', false, false);
+      item.dispatchEvent(close);
+    };
+  }
   const context = vm.createContext({
-    chrome, document, state, model, filters, XiaoyaTaskData: taskData,
+    chrome, document, state, model, filters, XiaoyaTaskData: taskData, setTimeout, clearTimeout,
     buildSeg: (element, html) => { element.innerHTML = html; }, moveThumb() {},
     renderList() { context.XiaoyaPanelVideo?.render(); }
   });
@@ -357,6 +365,7 @@ test('video selection starts directly from both entries and aggressive mode requ
   assert.equal(starts.length, 2);
   assert.ok(starts.every(button => button.disabled), 'no selection means both start entries are unavailable');
   assert.ok(starts.every(button => button.textContent === '开始刷课'));
+  assert.deepEqual(statuses(), ['先勾选视频或课件', '先勾选视频或课件']);
   assert.equal(document.getElementById('videoConfirm'), null, 'video runs no longer require a review dialog');
   assert.equal(document.getElementById('optAggressive').checked, false);
 
@@ -387,7 +396,11 @@ test('video selection starts directly from both entries and aggressive mode requ
   await context.XiaoyaPanelVideo.render();
   assert.equal(selectedLabel(), '已选 2 项（筛选外 1 项）', 'selections survive filter changes');
   assert.equal(document.getElementById('videoActions').hidden, false, 'hidden selections remain reachable outside the media filter');
+  let finishStart;
+  startGate = new Promise(resolve => { finishStart = resolve; });
   starts[0].click();
+  assert.deepEqual(statuses(), ['正在核对账号和所选任务…', '正在核对账号和所选任务…']);
+  assert.ok(starts.every(button => button.disabled && button.textContent === '正在启动…'));
   state.query = 'no match after click';
   await flush();
   assert.equal(messages.length, 1);
@@ -396,6 +409,10 @@ test('video selection starts directly from both entries and aggressive mode requ
   assert.equal(messages[0].account, 'account-a');
   assert.deepEqual(messages[0].selection.map(target => target.id), ['c12:v2', 'c11:v1']);
   assert.deepEqual(messages[0].options, { rate: 1.25, background: true, muted: true, recursive: true, autoNext: false, aggressive: false });
+  assert.match(statuses()[0], /正在核对/);
+  startGate = null;
+  finishStart();
+  await flush();
   assert.ok(starts.every(button => button.disabled));
   assert.ok(stops.every(button => !button.disabled));
   assert.equal(selectedLabel(), '已选 2 项（筛选外 2 项）', 'the checked list stays visible while its run is locked');
@@ -409,6 +426,7 @@ test('video selection starts directly from both entries and aggressive mode requ
   // Settings starts directly too, and backend errors remain visible at both entry areas.
   startError = '模拟后端拒绝启动';
   starts[1].click();
+  assert.ok(statuses().every(status => status === '正在核对账号和所选任务…'));
   await flush();
   assert.equal(messages.at(-1).type, 'start-selected');
   assert.deepEqual([...document.querySelectorAll('[data-video-message]')].map(node => node.textContent), ['', startError], 'a settings-start error appears only beside the settings entry');
@@ -447,11 +465,25 @@ test('video selection starts directly from both entries and aggressive mode requ
   document.getElementById('aggressiveEnable').click();
   assert.equal(toggle.checked, true, 'only the positive button enables aggressive mode');
   assert.equal(dialog.open, false);
+  assert.ok(starts.every(button => button.textContent === '完成任务'), 'aggressive mode turns the start button into direct completion');
+  assert.equal(localWrites, 0, 'aggressive opt-in stays panel-local');
+  const beforeFinish = messages.length;
   starts[1].click();
   await flush();
-  assert.deepEqual(messages.at(-1).options, { rate: 1.25, background: true, muted: true, recursive: true, autoNext: false, aggressive: true });
-  assert.match(statuses()[0], /激进模式/);
-  assert.equal(localWrites, 0, 'aggressive opt-in stays panel-local');
+  assert.equal(finishDialog.open, true, 'direct completion asks for confirmation');
+  assert.equal(messages.length, beforeFinish, 'nothing is sent before confirmation');
+  document.getElementById('finishCancel').click();
+  assert.equal(finishDialog.open, false);
+  assert.equal(messages.length, beforeFinish);
+  starts[1].click();
+  await flush();
+  document.getElementById('finishGo').click();
+  await flush();
+  const submitted = messages.at(-1);
+  assert.equal(submitted.type, 'finish-submit');
+  assert.equal(submitted.aggressive, true);
+  assert.deepEqual(submitted.selection.map(item => item.id), ['c12:v2', 'c11:v1']);
+  assert.equal(messages.some(message => message.type === 'start-selected' && message.options?.aggressive), false, 'aggressive mode never opens playback pages');
 
   stops[0].click();
   await flush();
