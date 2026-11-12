@@ -32,6 +32,9 @@ Chrome 与 Edge 复用同一份 extension 代码。使用 Edge 时在 Edge 内�
 
 AI API 设置（A1）
 在侧边栏设置中填写自己的 API 地址、密钥和模型，支持 Chat Completions 兼容服务。
+可以先选服务商预设（智谱、DeepSeek、硅基流动、阿里百炼、火山方舟、Ollama、OpenRouter、Gemini）自动填地址和模型，也可选“自定义”手填。
+可选填识图模型：含图题优先用它；留空由主模型处理。关闭“主模型支持图片输入”且没有识图模型时，含图题不发送并提示未作答。
+只支持 Chat Completions 协议；Messages、Responses 或 Gemini 原生地址会直接报错，不会强行拼接路径。
 地址支持 HTTPS 根地址、带版本的基础地址或完整 chat/completions 地址，以显示的实际请求地址为准。
 本机服务可使用 http://localhost:端口/v1 或 http://127.0.0.1:端口/v1。
 保存或测试时按所填域名请求访问权限，拒绝后不保存、不发送测试。

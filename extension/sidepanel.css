@@ -192,6 +192,10 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .ai-form { display: grid; gap: 7px; padding: 12px; }
 .ai-form label { font-weight: 500; }
 .ai-form input { min-width: 0; width: 100%; border: 1px solid var(--faint-2); border-radius: 9px; padding: 8px 10px; background: rgba(255,255,255,.8); }
+.ai-form select { min-width: 0; width: 100%; border: 1px solid var(--faint-2); border-radius: 9px; padding: 8px 10px; background: rgba(255,255,255,.8); }
+.ai-form .sub { font-weight: 400; color: var(--muted); }
+.ai-check { display: flex; align-items: center; gap: 7px; font-weight: 500; }
+.ai-check input { width: auto; margin: 0; accent-color: var(--accent); }
 .ai-form input::placeholder { color: var(--muted); font-size: 12px; }
 .ai-form input:disabled { opacity: .65; }
 .ai-form .note { padding: 0; }

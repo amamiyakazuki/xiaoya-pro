@@ -18,7 +18,8 @@
     // Existing content scripts use messages/session data, not storage.local.
     const ready = Promise.resolve().then(() => api.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })).then(() => true, () => false);
     const trusted = sender => sender?.id === api.runtime.id && sender.url === api.runtime.getURL('sidepanel.html');
-    const summary = saved => saved ? { address: saved.endpoint, model: saved.model, hasKey: Boolean(saved.key) } : { address: '', model: '', hasKey: false };
+    const summary = saved => saved ? { address: saved.endpoint, model: saved.model, hasKey: Boolean(saved.key),
+      visionModel: saved.visionModel || '', visionOk: saved.visionOk !== false } : { address: '', model: '', hasKey: false, visionModel: '', visionOk: true };
     async function read() {
       if (!await ready) throw new AIError('storage');
       try { return (await api.storage.local.get(KEY))[KEY]; } catch { throw new AIError('storage'); }
@@ -45,7 +46,12 @@
         const previous = await read();
         if (job.controller.signal.aborted) throw new AIError('cancelled');
         if (query && !previous) throw new AIError('unconfigured');
-        const settings = query ? client.config({ address: previous.endpoint, key: previous.key, model: previous.model }) : client.config(message.config, previous);
+        let settings = query ? client.config({ address: previous.endpoint, key: previous.key, model: previous.model,
+          visionModel: previous.visionModel, visionOk: previous.visionOk }) : client.config(message.config, previous);
+        if (query && Array.isArray(message.question?.images) && message.question.images.length) {
+          if (previous?.visionModel) settings = { ...settings, model: previous.visionModel };
+          else if (previous?.visionOk === false) throw new AIError('images');
+        }
         await permitted(settings);
         if (job.controller.signal.aborted) throw new AIError('cancelled');
         const options = { signal: job.controller.signal, fetchImpl, instructions: message.instructions };

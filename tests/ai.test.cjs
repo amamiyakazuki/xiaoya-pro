@@ -211,3 +211,37 @@ test('real worker routing keeps video stop responsive during an AI request', asy
   await send({ type: 'ai:cancel', requestId: 'integrated' });
   assert.equal((await pending).code, 'cancelled');
 });
+
+test('protocol-specific endpoints are rejected instead of being guessed', () => {
+  for (const address of ['https://api.example.com/v1/messages', 'https://api.example.com/v1/responses',
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent']) {
+    assert.throws(() => client.endpoint(address), { code: 'protocol' });
+  }
+});
+
+test('vision model and capability flag are kept in the saved configuration', () => {
+  const saved = client.config({ ...config, visionModel: 'glm-4v-flash', visionOk: false });
+  assert.equal(saved.visionModel, 'glm-4v-flash');
+  assert.equal(saved.visionOk, false);
+  assert.equal(client.config({ ...config, visionModel: 'glm-4v-flash' }, saved).visionOk, false, '省略时沿用已保存的开关');
+  assert.equal(client.config(config).visionOk, true, '默认按主模型支持图片处理');
+});
+
+test('image questions use the vision model, or are skipped when vision is off', async () => {
+  globalThis.XiaoyaQuestion = require('../extension/ai-question.js');
+  const question = { id: 'question_1', type: 'single', stem: '如图选择正确答案', options: [{ label: 'A', text: '甲' }, { label: 'B', text: '乙' }],
+    images: ['data:image/png;base64,AAAA'] };
+
+  const f = fixture();
+  await f.send('save', { config: { ...config, visionModel: 'vision-model' } });
+  await f.service.querySaved(question, null).catch(() => {});
+  assert.equal(f.calls.length, 1);
+  const body = JSON.parse(f.calls[0][1].body);
+  assert.equal(body.model, 'vision-model');
+
+  const g = fixture();
+  await g.send('save', { config: { ...config, visionOk: false } });
+  const skipped = await g.service.querySaved(question, null).catch(error => error);
+  assert.equal(skipped.code, 'images', '关闭图片识别且没有识图模型时整题不发送');
+  assert.equal(g.calls.length, 0);
+});

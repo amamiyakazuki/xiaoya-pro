@@ -102,6 +102,9 @@
         <section class="sect" id="aiSettings" aria-labelledby="aiHeading">
           <span id="aiHeading">AI API</span>
           <div class="group ai-form">
+            <label for="aiPreset">服务商预设</label>
+            <select id="aiPreset" aria-describedby="aiPresetHint"></select>
+            <p class="note" id="aiPresetHint"></p>
             <label for="aiAddress">API 地址</label>
             <input id="aiAddress" type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" aria-describedby="aiAddressHelp aiEndpoint">
             <p class="note" id="aiAddressHelp">支持 Chat Completions 兼容服务的基础地址或完整请求地址。</p>
@@ -111,6 +114,10 @@
             <p class="note" id="aiKeyHelp">仅保存在当前浏览器。已保存密钥不回显；更换请求地址需重新填写。</p>
             <label for="aiModel">模型</label>
             <input id="aiModel" type="text" placeholder="填写服务商提供的模型名称" autocomplete="off" spellcheck="false">
+            <label for="aiVisionModel">识图模型<span class="sub">（可选）</span></label>
+            <input id="aiVisionModel" type="text" placeholder="如 glm-4v-flash；留空则由主模型处理图片" autocomplete="off" spellcheck="false" aria-describedby="aiVisionHelp">
+            <p class="note" id="aiVisionHelp">题目含图片时优先使用这个模型，需与主模型同一服务地址。</p>
+            <label class="ai-check" for="aiVisionOk"><input id="aiVisionOk" type="checkbox" checked> 主模型支持图片输入</label>
             <div class="ai-actions"><button id="aiSave" type="button">保存配置</button><button id="aiTest" type="button">测试连接</button><button id="aiCancel" type="button" hidden>取消测试</button><button id="aiDelete" type="button">删除配置</button></div>
             <p id="aiStatus" class="ai-status" role="status" aria-live="polite"></p>
           </div>

@@ -2,9 +2,52 @@
   'use strict';
   const ai = globalThis.XiaoyaAI;
   const el = id => document.getElementById(id);
-  const fields = ['aiAddress', 'aiKey', 'aiModel'];
-  let saved = { address: '', model: '', hasKey: false }, busy = false, requestId = null;
-  const draft = () => ({ address: el('aiAddress').value, key: el('aiKey').value, model: el('aiModel').value });
+  const fields = ['aiAddress', 'aiKey', 'aiModel', 'aiVisionModel', 'aiVisionOk', 'aiPreset'];
+  const PRESETS = [
+    { key: 'custom', label: '自定义', address: '' },
+    { key: 'deepseek', label: 'DeepSeek', address: 'https://api.deepseek.com', model: 'deepseek-flash',
+      vision: 'deepseek-flash', hint: 'deepseek-flash 原生支持图片，闲时半价' },
+    { key: 'zhipu', label: '智谱 BigModel', address: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash',
+      vision: 'glm-4v-flash', hint: '文本模型免费；识图可用 glm-4v-flash（同样免费）' },
+    { key: 'siliconflow', label: '硅基流动', address: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B',
+      hint: '9B 及以下模型免费；视觉模型按量付费' },
+    { key: 'dashscope', label: '阿里百炼', address: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus',
+      vision: 'qwen-vl-plus', hint: '必须填兼容模式地址；图片题建议用 qwen-vl-plus' },
+    { key: 'ark', label: '火山方舟', address: 'https://ark.cn-beijing.volces.com/api/v3', model: '',
+      modelPlaceholder: '控制台的接入点 ID（ep-…）', hint: '模型要填接入点 ID，不是 doubao-xxx' },
+    { key: 'ollama', label: 'Ollama（本地）', address: 'http://localhost:11434/v1', model: 'qwen3:8b',
+      vision: 'qwen2.5vl:7b', hint: '本机运行，密钥随便填一个即可' },
+    { key: 'openrouter', label: 'OpenRouter', address: 'https://openrouter.ai/api/v1', model: '',
+      modelPlaceholder: '模型 ID，免费款以 :free 结尾', hint: '一个 key 可调多家模型' },
+    { key: 'gemini', label: 'Google Gemini', address: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash',
+      vision: 'gemini-2.5-flash', hint: '需要能访问 Google；免费层识图较强' }
+  ];
+  const MODEL_PLACEHOLDER = '填写服务商提供的模型名称';
+  // 保存的是补齐后的完整请求地址，按规范化结果反查预设。
+  const presetFor = value => {
+    const raw = (value || '').trim();
+    if (!raw) return PRESETS[0];
+    let normalized = '';
+    try { normalized = ai.endpoint(raw).endpoint; } catch { return PRESETS.find(item => item.address === raw) || PRESETS[0]; }
+    return PRESETS.find(item => {
+      if (!item.address) return false;
+      try { return ai.endpoint(item.address).endpoint === normalized; } catch { return false; }
+    }) || PRESETS[0];
+  };
+  let saved = { address: '', model: '', hasKey: false, visionModel: '', visionOk: true }, busy = false, requestId = null;
+  const draft = () => ({ address: el('aiAddress').value, key: el('aiKey').value, model: el('aiModel').value,
+    visionModel: el('aiVisionModel').value, visionOk: el('aiVisionOk').checked });
+  const applyPreset = (preset, fill) => {
+    const option = [...el('aiPreset').options].find(item => item.value === preset.key);
+    if (option) option.selected = true;
+    el('aiPresetHint').textContent = preset.hint || '';
+    el('aiModel').placeholder = preset.modelPlaceholder || MODEL_PLACEHOLDER;
+    el('aiVisionModel').placeholder = preset.vision ? `如 ${preset.vision}；留空则由主模型处理图片` : '如 glm-4v-flash；留空则由主模型处理图片';
+    if (fill) {
+      el('aiAddress').value = preset.address;
+      el('aiModel').value = preset.model || '';
+    }
+  };
   function status(text, tone = '') {
     el('aiStatus').textContent = text;
     el('aiStatus').dataset.tone = tone;
@@ -25,6 +68,9 @@
     saved = config;
     el('aiAddress').value = config.address;
     el('aiModel').value = config.model;
+    el('aiVisionModel').value = config.visionModel || '';
+    el('aiVisionOk').checked = config.visionOk !== false;
+    applyPreset(presetFor(config.address), false);
     el('aiKey').value = '';
     el('aiKey').placeholder = config.hasKey ? '已保存；留空保留，输入新密钥替换' : '填写自己的 API 密钥';
     preview();
@@ -78,6 +124,18 @@
     if (result.ok) { apply(result.config); status('已删除本机 AI 配置和密钥。'); }
     else status(result.error, 'error');
     lock(false);
+  });
+  el('aiPreset').innerHTML = PRESETS.map(preset => `<option value="${preset.key}">${preset.label}</option>`).join('');
+  el('aiPreset').addEventListener('change', () => {
+    const preset = PRESETS.find(item => item.key === el('aiPreset').value);
+    if (!preset) return;
+    applyPreset(preset, Boolean(preset.address));
+    preview();
+    if (preset.address) status('已填入预设地址，填写密钥后保存或测试。');
+  });
+  el('aiAddress').addEventListener('input', () => {
+    const preset = presetFor(el('aiAddress').value);
+    if (el('aiPreset').value !== preset.key) applyPreset(preset, false);
   });
   fields.forEach(id => el(id).addEventListener('input', () => {
     preview();

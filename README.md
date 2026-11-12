@@ -1,6 +1,6 @@
 # xiaoya-pro
 
-小雅 Pro 的私有开发仓库，目前实现为 Chrome / Microsoft Edge 扩展，提供任务面板、视频与课件队列、个人 AI API 配置、题旁答案和整份任务自动作答提交。当前版本为 **0.5.1**，浏览器中显示为“小雅刷课助手”。
+小雅 Pro 的私有开发仓库，目前实现为 Chrome / Microsoft Edge 扩展，提供任务面板、视频与课件队列、个人 AI API 配置、题旁答案和整份任务自动作答提交。当前版本为 **0.6.0**，浏览器中显示为“小雅刷课助手”。
 
 项目完整保留原 Git 历史，迁移基线为 `8548a4c`。脚本、桌面版与独立移动端的规划见源码仓库的 `P_PLAN/`。本版改动见 [更新记录](CHANGELOG.md)。项目基于 [xiaoze123kk/xiaoya-course-helper](https://github.com/xiaoze123kk/xiaoya-course-helper)。
 
@@ -8,7 +8,7 @@
 
 ## 下载与安装
 
-1. 从 [GitHub Release](https://github.com/amamiyakazuki/xiaoya-pro/releases/tag/v0.5.0) 下载对应浏览器的 ZIP，解压到固定目录。也可以下载本仓库源码。下载需要仓库访问权限。
+1. 从 [GitHub Release](https://github.com/amamiyakazuki/xiaoya-pro/releases/tag/v0.6.0) 下载对应浏览器的 ZIP，解压到固定目录。也可以下载本仓库源码。下载需要仓库访问权限。
 2. 打开浏览器扩展管理页：Chrome 输入 `chrome://extensions/`，Edge 输入 `edge://extensions/`，开启“开发者模式”。
 3. 点击“加载未打包的扩展程序”，选择源码里的 **`extension` 文件夹**，不要选择 ZIP 或仓库根目录。
 4. 将“小雅刷课助手”固定到工具栏，点击图标打开侧边栏。
@@ -23,8 +23,11 @@ Edge 和 Chrome 共用相同的 Manifest V3、功能代码与权限，不需要�
 
 在侧边栏右上角打开设置，填写自己的 **API 地址、密钥、模型**。当前支持 Chat Completions 兼容服务，每个人独立配置，无共享密钥或统一转发后台。
 
+- 可以先选**服务商预设**（智谱、DeepSeek、硅基流动、阿里百炼、火山方舟、Ollama、OpenRouter、Gemini），自动填好地址和模型占位，再补密钥；也可以选“自定义”手填。
+- 可选填**识图模型**：题目含图片时优先用它（需与主模型同一服务地址）；留空则由主模型处理。关掉“主模型支持图片输入”且没有识图模型时，含图题不会发送，浮标显示「题目含图片，当前配置未开启图片识别」。
 - 根地址 `https://api.example.com` 会补成 `/v1/chat/completions`；`https://api.example.com/v1` 或自定义基础路径会追加 `/chat/completions`；完整请求地址不重复追加。以设置中显示的“实际请求地址”为准。
 - 使用 HTTPS；本机服务也可填写 `http://localhost:端口/v1` 或 `http://127.0.0.1:端口/v1`。不接受带查询参数、片段或用户名/密码的地址。需要独立协议、URL 查询鉴权的服务暂不支持。
+- 只接 Chat Completions 协议。直接填 Anthropic Messages、OpenAI Responses 或 Gemini 原生地址会明确报错，不会强行拼接路径。
 - 点击“保存配置”或“测试连接”时，仅请求访问所填服务的域名。拒绝授权不会保存配置或发送测试。
 - 已保存密钥不回显；留空时保留原密钥，填写新密钥可替换。更换实际请求地址时需重新填写密钥，防止旧密钥被发送到另一个服务。
 - “测试连接”使用当前表单发送固定样题，不会保存配置，也不会读取作业；服务商可能按调用计费。测试验证连接及响应格式，不保证答案正确。超时为 25 秒，不自动重试。
@@ -116,7 +119,7 @@ B1 已通过本地模拟整批验证；用户真实 Chrome 试用已出现平台
 
 先结束当前批次并保存自己的草稿，再将新版的 `extension` 文件夹更新到浏览器原来加载的路径。在 Chrome 的 `chrome://extensions/` 或 Edge 的 `edge://extensions/` 找到“小雅刷课助手”，点击“重新加载”，再重开侧栏。需要使用新版浮标时，等当前作业编辑或提交结束后再刷新或重新打开该页面。
 
-0.5.0 安装包见 [GitHub Release](https://github.com/amamiyakazuki/xiaoya-pro/releases/tag/v0.5.0)。源码仓库不保存 ZIP。
+0.6.0 安装包见 [GitHub Release](https://github.com/amamiyakazuki/xiaoya-pro/releases/tag/v0.6.0)。源码仓库不保存 ZIP。
 
 ## 隐私与权限
 

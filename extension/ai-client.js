@@ -23,6 +23,8 @@
     size: '服务返回内容过大，请求已停止。',
     question: '题目内容不完整或超出大小限制，未发送给 AI。',
     vision: '服务未接受图片输入，请确认当前模型及接口支持 Chat Completions 图片输入，或检查图片大小。',
+    images: '题目含图片，但当前配置未开启图片识别；本题不会发送，请手动查看或改用支持识图的模型。',
+    protocol: '当前只支持 Chat Completions 兼容服务；这不是 Messages、Responses 或原生 Gemini 地址，请改填兼容地址或完整请求地址。',
     answer: 'AI 回答无法对应题目或格式不完整，请手动重试。',
     unconfigured: '请先在扩展设置页保存 AI 配置。',
     unknown: 'AI 操作失败，请重试；若扩展刚更新，请重新打开设置。'
@@ -37,6 +39,7 @@
     const local = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
     if ((!local && url.protocol !== 'https:') || url.username || url.password || url.search || url.hash || /[\s\\]/.test(value.trim())) throw new AIError('address');
     let path = url.pathname.replace(/\/+$/, '');
+    if (/(?:\/(?:messages|responses)|:generatecontent)\/?$/i.test(path)) throw new AIError('protocol');
     if (!path) path = '/v1';
     if (!path.endsWith('/chat/completions')) path += '/chat/completions';
     url.pathname = path;
@@ -49,7 +52,10 @@
     let key = typeof input?.key === 'string' ? input.key.trim() : '';
     if (!key && previous?.endpoint === target.endpoint) key = previous.key;
     if (!key || key.length > 4096 || !/^[\x21-\x7e]+$/.test(key)) throw new AIError('key');
-    return { ...target, model, key };
+    const visionModel = typeof input?.visionModel === 'string' ? input.visionModel.trim() : '';
+    if (visionModel && (visionModel.length > 200 || /[\x00-\x1f\x7f]/.test(visionModel))) throw new AIError('model');
+    const visionOk = input?.visionOk === undefined ? previous?.visionOk !== false : input.visionOk !== false;
+    return { ...target, model, key, visionModel, visionOk };
   }
   function failure(error) {
     const code = error instanceof AIError && MESSAGES[error.code] ? error.code : 'unknown';
