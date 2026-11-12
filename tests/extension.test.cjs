@@ -288,7 +288,7 @@ test('the side panel page references only files included in the extension', () =
   for (const name of files) assert.ok(fs.existsSync(path.join(root, 'extension', name)), name);
 });
 
-test('video selection starts directly from both entries and aggressive mode requires explicit opt-in', async () => {
+test('video selection starts directly from the dock entry and aggressive mode requires explicit opt-in', async () => {
   const { parseHTML } = require('linkedom');
   const { document } = parseHTML(fs.readFileSync(path.join(root, 'extension/sidepanel.html'), 'utf8'));
   const taskData = require(path.join(root, 'extension/task-data.js'));
@@ -362,10 +362,10 @@ test('video selection starts directly from both entries and aggressive mode requ
   const stops = [...document.querySelectorAll('[data-queue-stop]')];
   const statuses = () => [...document.querySelectorAll('[data-queue-status]')].map(label => label.textContent);
   const selectedLabel = () => document.getElementById('videoSelected').textContent;
-  assert.equal(starts.length, 2);
-  assert.ok(starts.every(button => button.disabled), 'no selection means both start entries are unavailable');
+  assert.equal(starts.length, 1, 'the settings sheet no longer has a second queue entry');
+  assert.ok(starts.every(button => button.disabled), 'no selection means the start entry is unavailable');
   assert.ok(starts.every(button => button.textContent === '开始刷课'));
-  assert.deepEqual(statuses(), ['先勾选视频或课件', '先勾选视频或课件']);
+  assert.deepEqual(statuses(), ['先勾选视频或课件']);
   assert.equal(document.getElementById('videoConfirm'), null, 'video runs no longer require a review dialog');
   assert.equal(document.getElementById('optAggressive').checked, false);
 
@@ -399,7 +399,7 @@ test('video selection starts directly from both entries and aggressive mode requ
   let finishStart;
   startGate = new Promise(resolve => { finishStart = resolve; });
   starts[0].click();
-  assert.deepEqual(statuses(), ['正在核对账号和所选任务…', '正在核对账号和所选任务…']);
+  assert.deepEqual(statuses(), ['正在核对账号和所选任务…']);
   assert.ok(starts.every(button => button.disabled && button.textContent === '正在启动…'));
   state.query = 'no match after click';
   await flush();
@@ -418,23 +418,19 @@ test('video selection starts directly from both entries and aggressive mode requ
   assert.equal(selectedLabel(), '已选 2 项（筛选外 2 项）', 'the checked list stays visible while its run is locked');
   assert.match(statuses()[0], /运行中/);
 
-  stops[1].click();
+  stops[0].click();
   await flush();
   assert.deepEqual(messages.at(-1), { type: 'stop', tabId: 7 });
-  assert.deepEqual(statuses(), ['已停止', '已停止']);
+  assert.deepEqual(statuses(), ['已停止']);
 
-  // Settings starts directly too, and backend errors remain visible at both entry areas.
+  // Backend start errors stay visible beside the dock entry without replacing the queue status.
   startError = '模拟后端拒绝启动';
-  starts[1].click();
+  starts[0].click();
   assert.ok(statuses().every(status => status === '正在核对账号和所选任务…'));
   await flush();
   assert.equal(messages.at(-1).type, 'start-selected');
-  assert.deepEqual([...document.querySelectorAll('[data-video-message]')].map(node => node.textContent), ['', startError], 'a settings-start error appears only beside the settings entry');
-  assert.ok(statuses().every(status => status !== startError), 'a startup error does not replace the queue status');
-  startError = '快捷入口暂时无法启动';
-  starts[0].click();
-  await flush();
-  assert.deepEqual([...document.querySelectorAll('[data-video-message]')].map(node => node.textContent), [startError, ''], 'a quick-start error appears only beside the quick entry');
+  assert.deepEqual([...document.querySelectorAll('[data-video-message]')].map(node => node.textContent), [startError], 'a start error appears beside the dock entry');
+  assert.equal(document.getElementById('videoActions').hidden, false, 'the dock stays visible while it shows an error');
   assert.ok(statuses().every(status => status !== startError), 'a stored startup error is never repeated in the queue status');
   startError = null;
 
@@ -468,14 +464,14 @@ test('video selection starts directly from both entries and aggressive mode requ
   assert.ok(starts.every(button => button.textContent === '完成任务'), 'aggressive mode turns the start button into direct completion');
   assert.equal(localWrites, 0, 'aggressive opt-in stays panel-local');
   const beforeFinish = messages.length;
-  starts[1].click();
+  starts[0].click();
   await flush();
   assert.equal(finishDialog.open, true, 'direct completion asks for confirmation');
   assert.equal(messages.length, beforeFinish, 'nothing is sent before confirmation');
   document.getElementById('finishCancel').click();
   assert.equal(finishDialog.open, false);
   assert.equal(messages.length, beforeFinish);
-  starts[1].click();
+  starts[0].click();
   await flush();
   document.getElementById('finishGo').click();
   await flush();
@@ -491,7 +487,7 @@ test('video selection starts directly from both entries and aggressive mode requ
   pending = { tabId: 8, status: '等待登录后获取任务…' };
   onChanged({ xiaoyaPendingScan: { newValue: pending } }, 'session');
   await flush();
-  assert.deepEqual(statuses(), ['等待登录后获取任务…', '等待登录后获取任务…']);
+  assert.deepEqual(statuses(), ['等待登录后获取任务…']);
   assert.ok(starts.every(button => button.disabled));
   assert.ok(stops.every(button => !button.disabled));
 

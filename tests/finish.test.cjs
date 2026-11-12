@@ -242,15 +242,17 @@ test('激进模式下开始刷课变为完成任务，确认后直接提交且�
 
   state.chip = 'all';
   await context.XiaoyaPanelVideo.render();
-  assert.equal(document.getElementById('videoActions').hidden, false, '全部分类里也有视频/文档工具栏');
+  assert.equal(document.getElementById('videoActions').hidden, true, '没有勾选时底栏不占位置');
+  assert.equal(document.getElementById('videoAll').hidden, false, '全部分类里的全选菜单提供视频/文档全选');
   assert.equal(document.getElementById('videoAll').textContent, '全选视频/文档');
-  assert.ok(document.getElementById('optAggressive'), '激进模式在全部里同样可见');
 
   const list = document.getElementById('list');
   list.innerHTML = context.XiaoyaPanelVideo.checkbox(tasks[0]);
   document.getElementById('videoAll').click();
   await flush();
   const starts = [...document.querySelectorAll('[data-queue-start]')];
+  assert.equal(document.getElementById('videoActions').hidden, false, '勾选后底栏出现');
+  assert.ok(document.getElementById('videoActions').contains(document.getElementById('optAggressive')), '激进开关在底栏视频行里');
   assert.equal(document.getElementById('videoSelected').textContent, '已选 1 项');
   assert.ok(starts.every(button => button.textContent === '开始刷课' && !button.disabled), '默认按钮是开始刷课');
 

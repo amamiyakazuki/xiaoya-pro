@@ -2,6 +2,21 @@
 (function () {
   const batchModel = globalThis.XiaoyaAnswerBatch;
   let selected = new Set(), selectionAccount = state.account, batch = null, starting = false, confirmed = null, lastEnded = null, openingDraft = null;
+  // 已结束批次的结果可以从底栏关掉；只记批次 id，新批次照常显示。
+  const DISMISS_KEY = 'xiaoyaDismissedAnswerBatch';
+  let dismissed = (() => { try { return localStorage.getItem(DISMISS_KEY); } catch { return null; } })();
+  const ended = () => Boolean(batch && batch.account === state.account && !batch.enabled && !batch.inFlight);
+  // 已结束的批次过时就不再占底栏：最后处理超过 24 小时，或其中任务在当前列表里都已完成。
+  const STALE_MS = 24 * 3600 * 1000;
+  function stale() {
+    if (!ended()) return false;
+    const times = [batch.created, ...batch.results.map(result => result?.at)].filter(Number.isFinite);
+    if (times.length && Date.now() - Math.max(...times) > STALE_MS) return true;
+    return state.tasks.length > 0 && batch.tasks.every(item => {
+      const current = state.tasks.find(task => task.id === item.id);
+      return !current || current.finished;
+    });
+  }
   const chosen = () => state.tasks.filter(task => selected.has(task.id) && batchModel.eligible(task));
   const visible = () => model.visibleTasks(state.tasks, filters(), Date.now()).filter(batchModel.eligible);
   const locked = () => starting || Boolean(batch?.enabled || batch?.inFlight);
@@ -22,15 +37,19 @@
     const count = chosen().length, visibleIds = new Set(visible().map(task => task.id));
     const hidden = [...selected].filter(id => !visibleIds.has(id)).length;
     $('answerSelected').textContent = `已选 ${count} 份${hidden ? `（筛选外 ${hidden} 份）` : ''}`;
+    const same = batch && batch.account === state.account;
+    const showResult = Boolean(same) && !(ended() && (dismissed === batch.id || stale()));
     $('answerAll').disabled = locked() || !visibleIds.size;
-    $('answerClear').disabled = locked() || !count;
+    // 有勾选时清空勾选；没有勾选时用来关掉已结束批次的结果。
+    $('answerClear').disabled = locked() || (!count && !(ended() && showResult));
+    $('answerClear').title = count ? '清空' : '关闭结果';
     $('answerReview').disabled = locked() || !count || !state.account;
     $('answerStop').hidden = !starting && !batch?.enabled;
     $('answerVerify').hidden = !batch?.inFlight || Boolean(batch?.enabled);
-    const same = batch && batch.account === state.account;
     const keepToolbar = count > 0 || starting || Boolean(batch?.enabled || batch?.inFlight) || openingCurrentDraft();
-    $('answerToolbar').hidden = state.chip === 'media' && !keepToolbar;
-    $('answerProgress').hidden = !same;
+    // 底栏只在有勾选、运行中或有未关闭的结果时出现；视频筛选下不显示旧结果。
+    $('answerToolbar').hidden = !keepToolbar && !(showResult && state.chip !== 'media');
+    $('answerProgress').hidden = !showResult;
     if (same) {
       $('answerStage').textContent = batch.stage === 'finished' ? '本批答题处理结束，可以开始下一批。' : batch.message;
       $('answerResults').innerHTML = batch.tasks.map((task, index) => {
@@ -43,6 +62,7 @@
       }).join('');
     }
     document.querySelectorAll('[data-answer-id]').forEach(input => { input.checked = selected.has(input.dataset.answerId); input.disabled = locked(); });
+    globalThis.XiaoyaPanelSelect?.render();
   }
   globalThis.XiaoyaPanelAnswer = {
     checkbox(task) { syncSelection(); return batchModel.eligible(task) ? `<input class="answer-check" type="checkbox" data-answer-id="${esc(task.id)}" data-key="a-${esc(task.id)}" aria-label="选择整份任务：${esc(task.name)}" ${selected.has(task.id) ? 'checked' : ''} ${locked() ? 'disabled' : ''}>` : ''; },
@@ -55,7 +75,16 @@
     render();
   });
   $('answerAll').addEventListener('click', () => { if (!locked()) visible().forEach(task => selected.add(task.id)); renderList(false); });
-  $('answerClear').addEventListener('click', () => { if (!locked()) selected.clear(); renderList(false); });
+  $('answerClear').addEventListener('click', () => {
+    if (locked()) return;
+    if (selected.size) selected.clear();
+    else if (ended()) {
+      dismissed = batch.id;
+      try { localStorage.setItem(DISMISS_KEY, batch.id); } catch { /* 存不下也只影响本次 */ }
+      $('answerMessage').textContent = '';
+    }
+    renderList(false);
+  });
   $('answerReview').addEventListener('click', () => {
     syncSelection(); if (locked() || !chosen().length) return;
     confirmed = { account: state.account, ids: chosen().map(task => task.id) };

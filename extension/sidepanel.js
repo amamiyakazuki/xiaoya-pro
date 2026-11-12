@@ -119,9 +119,12 @@ function renderList(animate) {
   list.classList.toggle('animate', Boolean(animate));
   list.innerHTML = html;
   if (active) document.querySelector(`[data-key="${CSS.escape(active)}"]`)?.focus();
+  $('listbar').hidden = !all.length;
+  $('listCount').textContent = `共 ${all.length} 项`;
   updateFold();
   globalThis.XiaoyaPanelAnswer?.render();
   globalThis.XiaoyaPanelVideo?.render();
+  globalThis.XiaoyaPanelSelect?.render();
 }
 
 function updateFold() {
@@ -132,6 +135,7 @@ function updateFold() {
   const label = anyOpen ? '全部收起' : '全部展开';
   $('fold').title = label;
   $('fold').setAttribute('aria-label', label);
+  $('fold').querySelector('span').textContent = label;
   $('fold').classList.toggle('flip', !anyOpen);
 }
 
@@ -195,6 +199,8 @@ function renderSync() {
     text = minutes < 1 ? '刚刚更新' : minutes < 60 ? `${minutes} 分钟前更新` : `${Math.floor(minutes / 60)} 小时前更新`;
   }
   $('sync').textContent = text;
+  // 更新时间不再占顶栏位置，放进刷新按钮的悬停提示。
+  $('refresh').title = text ? `刷新（${text}）` : '刷新';
   $('refresh').classList.toggle('spin', state.refreshing);
 }
 function renderAll(animate) { renderCounts(); renderBrief(); renderWeek(); renderNotice(); renderList(animate); renderSync(); }

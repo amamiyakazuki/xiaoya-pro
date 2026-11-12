@@ -176,12 +176,14 @@
     const hidden = [...selected.keys()].filter(id => !visibleIds.has(id)).length;
     const locked = isLocked();
     const videoChip = state.chip === 'media' || state.chip === 'all';
-    get('videoActions').hidden = !videoChip && !selected.size && !locked;
+    // 底栏只在有勾选、运行中或有待看的提示时出现；全选入口在列表栏。
+    const quickMessage = Boolean(get('videoActions').querySelector('[data-video-message]')?.textContent);
+    get('videoActions').hidden = !selected.size && !locked && !finishing && !quickMessage;
     get('videoAll').hidden = !videoChip;
     get('videoAll').textContent = state.chip === 'all' ? '全选视频/文档' : '全选';
     get('videoSelected').textContent = `已选 ${selected.size} 项${hidden ? `（筛选外 ${hidden} 项）` : ''}`;
     get('videoAll').disabled = locked || !state.account || !visibleMedia().some(task => !taskProblem(task));
-    get('videoClear').disabled = locked || !selected.size;
+    get('videoClear').disabled = locked || (!selected.size && !quickMessage);
     const finishBlocked = aggressive ? finishBlockedReason() : '';
     startButtons.forEach(button => {
       button.disabled = locked || finishing || !selected.size || !state.account || Boolean(finishBlocked);
@@ -196,6 +198,7 @@
       input.checked = selected.has(input.dataset.videoId);
       input.disabled = locked || !state.account || Boolean(taskForRow(input.dataset.videoTask) && taskProblem(taskForRow(input.dataset.videoTask)));
     });
+    globalThis.XiaoyaPanelSelect?.render();
   }
 
   function taskForRow(id) { return state.tasks.find(task => String(task.id) === String(id)); }
@@ -225,11 +228,9 @@
       if (state.tasks.find(row => String(row.id) === String(id))?.finished) selected.delete(id);
     }
     countLabels.forEach(label => { label.textContent = total ? `已完成 ${completed}/${total} 项` : `已完成 ${completed} 项`; });
-    get('queueLogs').replaceChildren(...(activeRun?.logs || []).slice(-6).reverse().map(entry => {
-      const item = document.createElement('li');
-      item.textContent = `${new Date(entry.time).toLocaleTimeString('zh-CN')} ${entry.text}`;
-      return item;
-    }));
+    // 底栏的状态行：运行中、等待中，或上一轮停在仍勾选着的任务上（停止或出错）时显示。
+    const leftover = Boolean(activeRun && !activeRun.enabled && (activeRun.selection || []).some(item => selected.has(String(item?.id))));
+    get('videoActions').classList.toggle('show-status', starting || running || Boolean(activePending) || leftover);
     renderSelection();
   }
 

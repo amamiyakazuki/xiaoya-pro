@@ -10,17 +10,19 @@
   <main class="panel" aria-label="任务面板">
     <header class="head">
       <span class="logo"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.3 12 13 4.5"/></svg></span>
-      <div class="title"><strong>小雅任务</strong><span id="sync" aria-live="polite"></span></div>
+      <div class="title">
+        <strong>小雅任务</strong>
+        <div class="brief-wrap" id="briefWrap">
+          <button class="brief" id="brief" aria-expanded="false" aria-controls="weekwrap" aria-describedby="briefTip"></button>
+          <div class="brief-tip" id="briefTip" role="tooltip" hidden></div>
+        </div>
+        <span class="sr-only" id="sync" aria-live="polite"></span>
+      </div>
       <button class="icon" id="searchBtn" aria-label="搜索" title="搜索" aria-expanded="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg></button>
-      <button class="icon" id="fold" aria-label="全部收起" title="全部收起"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.5 3.5-3 3.5 3M4.5 9.5l3.5 3 3.5-3"/></svg></button>
       <button class="icon" id="refresh" aria-label="刷新任务" title="刷新"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2v3h-3"/></svg></button>
       <button class="icon" id="gear" aria-label="打开设置" title="设置"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.5h6M12 4.5h2M2 11.5h2M8 11.5h6"/><circle cx="10" cy="4.5" r="1.8"/><circle cx="6" cy="11.5" r="1.8"/></svg></button>
     </header>
 
-    <div class="brief-wrap" id="briefWrap">
-      <button class="brief" id="brief" aria-expanded="false" aria-controls="weekwrap" aria-describedby="briefTip"></button>
-      <div class="brief-tip" id="briefTip" role="tooltip" hidden></div>
-    </div>
     <div class="weekwrap" id="weekwrap"><section class="week" id="week" aria-label="未来 7 天"></section></div>
 
     <div class="controls">
@@ -29,23 +31,19 @@
       <div class="chips" id="chips"></div>
     </div>
 
-    <section class="quick-queue" id="videoActions" aria-label="视频课件队列" hidden>
-      <div class="video-toolbar">
-        <strong id="videoSelected">已选 0 项</strong>
-        <button id="videoAll" type="button" title="全选当前筛选中的可执行项目">全选</button>
-        <button id="videoClear" type="button" disabled>清空</button>
+    <div class="listbar" id="listbar" hidden>
+      <div class="select-wrap">
+        <button class="select-all" id="selectAll" type="button" role="checkbox" aria-checked="false" aria-haspopup="menu" aria-expanded="false" disabled><i aria-hidden="true"></i><span>全选</span><svg class="caret" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>
+        <div class="select-menu" id="selectMenu" role="menu" hidden>
+          <button id="videoAll" type="button" role="menuitem" title="全选当前筛选中的可执行项目">全选</button>
+          <button id="answerAll" type="button" role="menuitem" title="全选当前筛选中可自动作答的任务">全选可作答任务</button>
+          <button id="selectNone" type="button" role="menuitem">取消全部选择</button>
+        </div>
       </div>
-      <div class="queue"><button type="button" data-queue-start disabled>开始刷课</button><button type="button" data-queue-stop disabled>停止</button></div>
-      <label class="video-aggressive" for="optAggressive"><input id="optAggressive" type="checkbox">激进模式</label>
-      <div class="queue-state queue-head" role="status"><strong data-queue-status>尚未开始</strong><span data-queue-count></span></div>
-      <p class="video-message" data-video-message role="status" aria-live="polite"></p>
-    </section>
-    <section class="answer-toolbar" id="answerToolbar" aria-label="整份任务自动作答">
-      <div><strong id="answerSelected">已选 0 份</strong><button id="answerAll">选中筛选内任务</button><button id="answerClear">清空</button></div>
-      <div><button id="answerReview" disabled>自动作答并提交…</button><button id="answerStop" hidden>停止</button><button id="answerVerify" hidden>核对提交结果</button></div>
-      <p id="answerMessage" role="status"></p>
-      <details id="answerProgress" hidden><summary id="answerStage"></summary><ol id="answerResults"></ol></details>
-    </section>
+      <span class="list-count" id="listCount"></span>
+      <button class="fold" id="fold" type="button" aria-label="全部收起" title="全部收起"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.5 3.5-3 3.5 3M4.5 9.5l3.5 3 3.5-3"/></svg><span>全部收起</span></button>
+    </div>
+
     <dialog id="answerConfirm" aria-labelledby="answerConfirmTitle">
       <h3 id="answerConfirmTitle"></h3>
       <p>下列任务将补齐空题并自动提交，包括只能提交一次的任务。含附件题时跳过附件，其余支持的题目填写后保留草稿，不自动提交，并继续下一份。已有人工答案和附件保留；其他题目无法填写时整份待处理。未选中的任务不会执行。</p>
@@ -68,6 +66,34 @@
     <div class="scroller" id="scroller">
       <div class="notice" id="notice" hidden></div>
       <div class="list" id="list"></div>
+    </div>
+
+    <!-- 底部操作栏：有勾选、正在运行或有待查看的结果时才出现。 -->
+    <div class="dock" id="dock">
+      <section class="dock-row answer-toolbar" id="answerToolbar" aria-label="整份任务自动作答" hidden>
+        <div class="dock-main">
+          <span class="dot" aria-hidden="true"></span><span class="dock-kind">作答</span>
+          <strong class="dock-count" id="answerSelected">已选 0 份</strong>
+          <button class="dock-x" id="answerClear" type="button" aria-label="清空作答选择" title="清空"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg></button>
+          <button class="dock-primary" id="answerReview" type="button" disabled>自动作答并提交…</button>
+          <button class="dock-primary dock-stop" id="answerStop" type="button" hidden>停止</button>
+          <button class="dock-soft" id="answerVerify" type="button" hidden>核对提交结果</button>
+        </div>
+        <p class="dock-message" id="answerMessage" role="status"></p>
+        <details id="answerProgress" hidden><summary id="answerStage"></summary><ol id="answerResults"></ol></details>
+      </section>
+      <section class="dock-row quick-queue" id="videoActions" aria-label="视频课件队列" hidden>
+        <div class="dock-main">
+          <span class="dot" aria-hidden="true"></span><span class="dock-kind">视频</span>
+          <strong class="dock-count" id="videoSelected">已选 0 项</strong>
+          <button class="dock-x" id="videoClear" type="button" aria-label="清空视频选择" title="清空" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg></button>
+          <label class="video-aggressive" for="optAggressive" title="激进模式：直接提交完成状态，不增加学习时长"><span class="switch mini"><input id="optAggressive" type="checkbox"><i></i></span>激进</label>
+          <div class="queue"><button type="button" data-queue-start disabled>开始刷课</button><button type="button" data-queue-stop disabled>停止</button></div>
+        </div>
+        <div class="queue-state queue-head" role="status"><strong data-queue-status>尚未开始</strong><span data-queue-count></span></div>
+        <p class="video-message" data-video-message role="status" aria-live="polite"></p>
+        <span class="dock-progress" aria-hidden="true"></span>
+      </section>
     </div>
 
     <section class="sheet" id="sheet" aria-label="设置">
@@ -99,14 +125,7 @@
             <label class="opt" for="optMuted">静音自动播放<span class="switch"><input id="optMuted" type="checkbox"><i></i></span></label>
             <label class="opt" for="optAutoNext">完成后自动下一任务<span class="switch"><input id="optAutoNext" type="checkbox"><i></i></span></label>
           </div>
-        </div>
-        <div class="sect"><span>视频课件队列</span>
-          <div class="group">
-            <div class="queue"><button id="queueStart" data-queue-start disabled>开始刷课</button><button id="queueStop" data-queue-stop disabled>停止</button></div>
-            <div class="queue-state" aria-live="polite"><div class="queue-head"><strong id="queueStatus" data-queue-status>尚未开始</strong><span id="queueCount" data-queue-count></span></div><ol id="queueLogs"></ol></div>
-            <p class="video-message" data-video-message role="status" aria-live="polite"></p>
-          </div>
-          <p class="note">在列表勾选后点「开始刷课」。请保持小雅登录和刷课标签页开启。</p>
+          <p class="note">在列表勾选视频或课件后，用底部操作栏的「开始刷课」启动。请保持小雅登录和刷课标签页开启。</p>
         </div>
       </div>
     </section>
@@ -117,6 +136,7 @@
   <script src="sidepanel.js"></script>
   <script src="panel-answer.js"></script>
   <script src="panel-queue.js"></script>
+  <script src="panel-select.js"></script>
   <script src="ai-client.js"></script>
   <script src="panel-ai.js"></script>
 </body>
