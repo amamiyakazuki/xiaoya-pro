@@ -1,7 +1,7 @@
-xiaoya-pro 私有开发仓库：https://github.com/amamiyakazuki/xiaoya-pro
-0.5.0 安装包：https://github.com/amamiyakazuki/xiaoya-pro/releases/tag/v0.5.0（需仓库访问权限）
+源码仓库：https://github.com/amamiyakazuki/xiaoya-pro
+安装包：https://github.com/amamiyakazuki/xiaoya-pro/releases/latest
 
-小雅助手 Pro 0.6.0（Chrome / Microsoft Edge 120 及以上）
+小雅助手 Pro 0.7.0（Chrome / Microsoft Edge 120 及以上）
 
 安装
 1. 将安装包完整解压到固定目录。

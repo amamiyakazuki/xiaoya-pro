@@ -6,7 +6,7 @@
 
 **小雅课程平台的浏览器侧栏助手：任务一览、视频课件队列、个人 AI 答案与批量作答**
 
-![版本](https://img.shields.io/badge/版本-0.6.0-2f6fe4) ![浏览器](https://img.shields.io/badge/Chrome%20%2F%20Edge-120%2B-1f8f60) ![Manifest](https://img.shields.io/badge/Manifest-V3-6d9df2) ![许可证](https://img.shields.io/badge/许可证-AGPL--3.0-ad6a05)
+![版本](https://img.shields.io/badge/版本-0.7.0-2f6fe4) ![浏览器](https://img.shields.io/badge/Chrome%20%2F%20Edge-120%2B-1f8f60) ![Manifest](https://img.shields.io/badge/Manifest-V3-6d9df2) ![许可证](https://img.shields.io/badge/许可证-AGPL--3.0-ad6a05)
 
 </div>
 

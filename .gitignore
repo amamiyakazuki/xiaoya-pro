@@ -11,3 +11,8 @@ node_modules/
 !.env.example
 *.log
 /private-evidence/
+
+# 内部开发笔记不进入公开仓库。
+memory/
+bug.md
+P_PLAN/
