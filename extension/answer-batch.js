@@ -35,7 +35,7 @@
       return `${questionLabel(item, index)}（${item.typeName || '题型未识别'}）：${item.reason || '无法确认作答状态或填写方式'}`;
     }).filter(Boolean).join('\n');
   }
-  function createEngine({ storage, driver, getAccount, query, aiReady = async () => true, videoActive = async () => false, now = Date.now, uuid = () => crypto.randomUUID() }) {
+  function createEngine({ storage, driver, getAccount, query, aiReady = async () => true, now = Date.now, uuid = () => crypto.randomUUID() }) {
     let state = null, job = null, reserved = false, epoch = 0, writes = Promise.resolve();
     const save = () => {
       const snapshot = structuredClone(state);
@@ -134,7 +134,7 @@
             if (attachments.size) {
               const skipped = snapshot.questions.map((item, index) => attachments.has(item.question?.id) ? questionLabel(item, index) : '').filter(Boolean).join('、');
               const answered = filled.questions.length - attachments.size;
-              state.results[state.index++] = { status: 'draft', message: `已跳过附件题：${skipped}。\n${answered ? `页面已确认其余 ${answered} 题已答，已有答案保留。` : '本份仅含附件题，未填写。'}\n未提交；请在原答题页核对草稿并补齐附件。`, draftPage: driver.draftReference?.() || null, at: now() };
+              state.results[state.index++] = { status: 'draft', message: `已跳过附件题：${skipped}。\n${answered ? `页面已确认其余 ${answered} 题已答，已有答案保留。` : '本份仅含附件题，未填写。'}\n未提交，可稍后补附件。`, draftPage: driver.draftReference?.() || null, at: now() };
               await save();
               continue;
             }
@@ -167,7 +167,6 @@
       try {
         await ready;
         if (state?.inFlight) throw Error('上一份提交结果待核对，不能开始新批次。');
-        if (await videoActive()) throw Error('视频课件队列正在运行，请先停止。');
         if (!await aiReady()) throw Error('请先保存可用的 AI 配置并授权服务域名。');
         if (!input?.account || await getAccount() !== input.account) throw Error('账号已变化，请刷新并重新选择。');
         if (!Array.isArray(input.tasks) || !input.tasks.length || input.tasks.length > 200) throw Error('请选择 1–200 份任务。');

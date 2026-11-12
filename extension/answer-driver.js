@@ -104,9 +104,9 @@
       // A fresh server result still works when the old tab shows a stale processing state.
       return verifySubmitted ? await verifySubmitted(task) : false;
     }
-    async function focusDraft(task, reference, verifyBatch) {
+    async function focusDraft(task, reference, verifyBatch, canFocus) {
       const { tabId, pageToken } = reference;
-      const missing = '原答题页已关闭、重载或离开，请从小雅课程手动核对。';
+      const missing = '原答题页已关闭、重载或离开，可稍后从小雅课程打开。';
       if (!Number.isInteger(tabId) || typeof pageToken !== 'string' || !pageToken) throw Error(missing);
       async function locate() {
         const tab = await api.tabs.get(tabId).catch(() => null);
@@ -118,11 +118,13 @@
       await locate();
       if (!await verifyBatch()) return false;
       const tab = await locate();
+      if (!canFocus()) return false;
       await api.tabs.update(tabId, { active: true });
-      if (Number.isInteger(tab.windowId)) await api.windows.update(tab.windowId, { focused: true });
+      if (canFocus() && Number.isInteger(tab.windowId)) await api.windows.update(tab.windowId, { focused: true });
       return true;
     }
     return { open, enter, inspect, verify,
+      usesTab: id => id === tabId || children.has(id),
       fill: (task, item) => send(task, 'fill', { item }),
       submit: (task, fingerprint) => send(task, 'submit', { fingerprint }),
       draftReference: () => Number.isInteger(tabId) && pageToken ? { tabId, pageToken } : null,

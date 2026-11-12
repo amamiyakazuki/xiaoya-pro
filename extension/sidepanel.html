@@ -17,7 +17,10 @@
       <button class="icon" id="gear" aria-label="打开设置" title="设置"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.5h6M12 4.5h2M2 11.5h2M8 11.5h6"/><circle cx="10" cy="4.5" r="1.8"/><circle cx="6" cy="11.5" r="1.8"/></svg></button>
     </header>
 
-    <button class="brief" id="brief" aria-expanded="false"></button>
+    <div class="brief-wrap" id="briefWrap">
+      <button class="brief" id="brief" aria-expanded="false" aria-controls="weekwrap" aria-describedby="briefTip"></button>
+      <div class="brief-tip" id="briefTip" role="tooltip" hidden></div>
+    </div>
     <div class="weekwrap" id="weekwrap"><section class="week" id="week" aria-label="未来 7 天"></section></div>
 
     <div class="controls">
@@ -26,6 +29,17 @@
       <div class="chips" id="chips"></div>
     </div>
 
+    <section class="quick-queue" id="videoActions" aria-label="视频课件队列" hidden>
+      <div class="video-toolbar">
+        <strong id="videoSelected">已选 0 项</strong>
+        <button id="videoAll" type="button" title="全选当前筛选中的可执行项目">全选</button>
+        <button id="videoClear" type="button" disabled>清空</button>
+      </div>
+      <div class="queue"><button type="button" data-queue-start disabled>开始刷课</button><button type="button" data-queue-stop disabled>停止</button></div>
+      <label class="video-aggressive" for="optAggressive"><input id="optAggressive" type="checkbox">激进模式</label>
+      <div class="queue-state queue-head" role="status"><strong data-queue-status>尚未开始</strong><span data-queue-count></span></div>
+      <p class="video-message" data-video-message role="status" aria-live="polite"></p>
+    </section>
     <section class="answer-toolbar" aria-label="整份任务自动作答">
       <div><strong id="answerSelected">已选 0 份</strong><button id="answerAll">选中筛选内任务</button><button id="answerClear">清空</button></div>
       <div><button id="answerReview" disabled>自动作答并提交…</button><button id="answerStop" hidden>停止</button><button id="answerVerify" hidden>核对提交结果</button></div>
@@ -37,6 +51,10 @@
       <p>下列任务将补齐空题并自动提交，包括只能提交一次的任务。含附件题时跳过附件，其余支持的题目填写后保留草稿，不自动提交，并继续下一份。已有人工答案和附件保留；其他题目无法填写时整份待处理。未选中的任务不会执行。</p>
       <ol id="answerConfirmList"></ol>
       <div class="answer-actions"><button id="answerBack">返回修改</button><button id="answerGo">确认，开始作答并提交</button></div>
+    </dialog>
+    <dialog id="aggressiveConfirm" aria-labelledby="aggressiveConfirmText">
+      <p id="aggressiveConfirmText">本次操作不会增加学习时长</p>
+      <div class="aggressive-actions"><button id="aggressiveCancel" type="button">取消</button><button id="aggressiveEnable" type="button">开启</button></div>
     </dialog>
     <div class="scroller" id="scroller">
       <div class="notice" id="notice" hidden></div>
@@ -71,15 +89,15 @@
             <label class="opt" for="optBackground">后台继续学习<span class="switch"><input id="optBackground" type="checkbox"><i></i></span></label>
             <label class="opt" for="optMuted">静音自动播放<span class="switch"><input id="optMuted" type="checkbox"><i></i></span></label>
             <label class="opt" for="optAutoNext">完成后自动下一任务<span class="switch"><input id="optAutoNext" type="checkbox"><i></i></span></label>
-            <label class="opt" for="optRecursive">课程内包含子章节<span class="switch"><input id="optRecursive" type="checkbox"><i></i></span></label>
           </div>
         </div>
         <div class="sect"><span>视频课件队列</span>
           <div class="group">
-            <div class="queue"><button id="queueStart">开始队列</button><button id="queueStop">停止</button></div>
-            <div class="queue-state" aria-live="polite"><div class="queue-head"><strong id="queueStatus">尚未开始</strong><span id="queueCount"></span></div><ol id="queueLogs"></ol></div>
+            <div class="queue"><button id="queueStart" data-queue-start disabled>开始刷课</button><button id="queueStop" data-queue-stop disabled>停止</button></div>
+            <div class="queue-state" aria-live="polite"><div class="queue-head"><strong id="queueStatus" data-queue-status>尚未开始</strong><span id="queueCount" data-queue-count></span></div><ol id="queueLogs"></ol></div>
+            <p class="video-message" data-video-message role="status" aria-live="polite"></p>
           </div>
-          <p class="note">请在小雅“我的课程”首页或课程资源页点开始。保留一个小雅标签页，即可使用其他网页。运行时请勿刷新或关闭小雅页，计时以平台为准。</p>
+          <p class="note">先在列表逐项勾选，点击开始后立即按当前清单启动。请保持当前小雅页面已登录，并勿在运行中刷新或关闭。</p>
         </div>
       </div>
     </section>

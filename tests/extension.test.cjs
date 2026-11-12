@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 
-function fixture({ done = false, ended = true, file = true, courseware = false, home = false, scanOnly = false, autoNext = true, taskName, headingAttribute = true, taskHref } = {}) {
+function fixture({ done = false, ended = true, file = true, courseware = false, home = false, scanOnly = false, autoNext = true, taskName, headingAttribute = true, taskHref, selection, selectedNode } = {}) {
   let now = 100000;
   let interval;
   let listener;
@@ -29,7 +29,7 @@ function fixture({ done = false, ended = true, file = true, courseware = false, 
   });
   const homeCards = [homeCard(firstName, true), homeCard('章节测验', false), homeCard('讨论任务', false)];
   const location = { origin: 'https://whut.ai-augmented.com',
-    pathname: home ? '/app/jx-web/mycourse' : `/app/jx-web/mycourse/course/resource/folder${file ? '/file' : ''}`,
+    pathname: home ? '/app/jx-web/mycourse' : selection ? `/app/jx-web/mycourse/42/resource/_/${selectedNode || '11'}` : `/app/jx-web/mycourse/course/resource/folder${file ? '/file' : ''}`,
     get href() { return this.origin + this.pathname; }, assign(url) { assigned.push(url); } };
   const video = { ended, paused: false, duration: 100, currentTime: ended ? 100 : 30,
     pause() { pauses++; }, async play() {} };
@@ -62,11 +62,18 @@ function fixture({ done = false, ended = true, file = true, courseware = false, 
     MouseEvent: class {},
     setInterval(callback, delay) { if (delay === 1000) interval = callback; },
     chrome: { runtime: { onMessage: { addListener(fn) { listener = fn; } },
-      async sendMessage(msg) { sent.push(structuredClone(msg)); return {}; } } } });
+      async sendMessage(msg) {
+        sent.push(structuredClone(msg));
+        if (!selection) return {};
+        if (msg.type === 'get') return { run: { id: 'run1', enabled: true, mode: 'selected', selection, selectionIndex: 0,
+          options: { rate: 2, background: true, autoNext }, completed: [], logs: [] } };
+        return { ok: true, accepted: true };
+      } } } });
   vm.runInContext(fs.readFileSync(path.join(root, 'extension/task-timing.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'extension/content.js'), 'utf8'), context);
   const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
-  return { sent, events, document, video, assigned,
+  return { sent, events, document, video, assigned, settle,
+    command(type) { listener({ type }, {}, () => {}); },
     async start() { listener({ type: 'run', run: { id: 'run1', enabled: true, mode: home ? 'home' : 'directory', scanOnly, tasks: [], homeFinished: [], course: home ? 'previous-course' : undefined, options: { rate: 2, documentSeconds: 60, background: true, recursive: true, autoNext }, completed: [], visited: [], stack: [], logs: [] } }, {}, () => {}); await settle(); },
     async tick(ms = 6000) { now += ms; interval(); await settle(); },
     async halt() { listener({ type: 'halt' }, {}, () => {}); await settle(); },
@@ -76,6 +83,55 @@ function fixture({ done = false, ended = true, file = true, courseware = false, 
     get homeClicks() { return homeClicks; },
     get completedClicks() { return completedClicks; }, get nextClicks() { return nextClicks; }, get pauses() { return pauses; } };
 }
+
+const selectedResources = [
+  { id: '42:11', courseId: '42', nodeId: '11', name: 'first' },
+  { id: '42:13', courseId: '42', nodeId: '13', name: 'first' }
+];
+
+test('selected content requests one advancement after platform confirmation, with no directory traversal', async () => {
+  const f = fixture({ selection: selectedResources });
+  await f.settle();
+  assert.deepEqual(f.sent[0], { type: 'get', selectedProtocol: 1 });
+  await f.tick();
+  assert.equal(f.completedClicks, 1);
+  assert.equal(f.sent.filter(msg => msg.type === 'selected-advance').length, 0);
+  f.setDone(true);
+  await f.tick(); await f.tick();
+  assert.deepEqual(f.sent.filter(msg => msg.type === 'selected-advance'), [{ type: 'selected-advance', runId: 'run1', index: 0 }]);
+  assert.equal(f.nextClicks, 0);
+  assert.deepEqual(f.assigned, []);
+});
+
+test('selected content touches no resource on a wrong node or mismatched name', async () => {
+  for (const page of [{ selectedNode: '13' }, { taskName: 'unselected.mp4' }, { taskName: 'first.avi' }]) {
+    const f = fixture({ selection: selectedResources, ...page });
+    await f.settle(); await f.tick(31000);
+    assert.equal(f.completedClicks, 0);
+    assert.equal(f.nextClicks, 0);
+    assert.equal(f.video.playbackRate, undefined);
+    assert.deepEqual(f.events, []);
+    assert.ok(f.sent.some(msg => msg.run?.enabled === false));
+  }
+});
+
+test('selected stop while waiting for playback prevents a late completion click', async () => {
+  const f = fixture({ selection: selectedResources, ended: false });
+  await f.settle();
+  let finishPlaying;
+  f.video.paused = true;
+  f.video.play = () => new Promise(resolve => { finishPlaying = resolve; });
+  f.command('halt');
+  await f.tick();
+  assert.equal(typeof finishPlaying, 'function', 'legacy halt did not stop the selected run');
+  f.command('selected-halt');
+  f.video.ended = true;
+  finishPlaying();
+  await f.settle(); await f.tick();
+  assert.equal(f.completedClicks, 0);
+  assert.equal(f.events.at(-1).detail, false);
+  assert.equal(f.sent.filter(msg => msg.type === 'selected-advance').length, 0);
+});
 
 test('home scan opens all tasks, filters unsupported types and does not launch resources', async () => {
   const f = fixture({ home: true, scanOnly: true }); await f.start();
@@ -230,6 +286,182 @@ test('the side panel page references only files included in the extension', () =
   const files = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map(match => match[1]);
   assert.ok(files.length >= 5);
   for (const name of files) assert.ok(fs.existsSync(path.join(root, 'extension', name)), name);
+});
+
+test('video selection starts directly from both entries and aggressive mode requires explicit opt-in', async () => {
+  const { parseHTML } = require('linkedom');
+  const { document } = parseHTML(fs.readFileSync(path.join(root, 'extension/sidepanel.html'), 'utf8'));
+  const taskData = require(path.join(root, 'extension/task-data.js'));
+  const model = require(path.join(root, 'extension/panel-model.js'));
+  const now = Date.now();
+  const media = (id, courseId, nodeId, name, end, extra = {}) => ({
+    id, courseId, courseName: `课程 ${courseId}`, nodeId, resourceId: `r${nodeId}`,
+    typeCode: 1, type: '视频课件', name, finished: false, start: now - 1000, end, finishedAt: null, ...extra
+  });
+  const tasks = [
+    media('c11:v1', '11', '101', '章节一视频', now + 3 * 86400000),
+    media('c12:v2', '12', '102', '章节二课件', now + 2 * 86400000),
+    media('c13:v3', '13', '103', '已完成章节', now + 4 * 86400000, { finished: true, finishedAt: now }),
+    media('c14:v4', '14', '104', '重复路由一', now + 4 * 86400000),
+    media('c14:v5', '14', '104', '重复路由二', now + 4 * 86400000, { finished: true, finishedAt: now }),
+    { ...media('c15:a1', '15', '105', '普通作业', now + 86400000), typeCode: 2, type: '作业' }
+  ];
+  const state = { account: 'account-a', tasks, chip: 'media', tab: 'pending', query: '章节', day: null };
+  const filters = () => ({ tab: state.tab, chip: state.chip, query: state.query, day: state.day });
+  const messages = [];
+  let run, pending, onChanged, startError = null;
+  let localWrites = 0;
+  const chrome = {
+    tabs: { async query() { return [{ id: 7 }]; } },
+    storage: {
+      local: {
+        async get(key) { return key === 'options' ? { options: { rate: 1.25, autoNext: false } } : { xiaoyaAnswerBatch: { enabled: true } }; },
+        async set() { localWrites++; }
+      },
+      session: { async get() { return { xiaoyaRun: run, xiaoyaPendingScan: pending }; } },
+      onChanged: { addListener(callback) { onChanged = callback; } }
+    },
+    runtime: {
+      async sendMessage(message) {
+        messages.push(structuredClone(message));
+        if (message.type === 'start-selected') {
+          if (startError) return { ok: false, error: startError };
+          run = { mode: 'selected', tabId: 7, enabled: true, status: '运行中', selection: message.selection, selectionIndex: 0, completed: [], options: message.options };
+        }
+        if (message.type === 'stop') run = { ...run, enabled: false, status: '已停止' };
+        return { ok: true };
+      }
+    }
+  };
+  const dialog = document.getElementById('aggressiveConfirm');
+  Object.defineProperty(dialog, 'open', { get() { return this.hasAttribute('open'); }, set(value) { value ? this.setAttribute('open', '') : this.removeAttribute('open'); } });
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.close = () => {
+    dialog.open = false;
+    const close = document.createEvent('Event');
+    close.initEvent('close', false, false);
+    dialog.dispatchEvent(close);
+  };
+  const context = vm.createContext({
+    chrome, document, state, model, filters, XiaoyaTaskData: taskData,
+    buildSeg: (element, html) => { element.innerHTML = html; }, moveThumb() {},
+    renderList() { context.XiaoyaPanelVideo?.render(); }
+  });
+  vm.runInContext(fs.readFileSync(path.join(root, 'extension/panel-queue.js'), 'utf8'), context);
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  await flush();
+  const starts = [...document.querySelectorAll('[data-queue-start]')];
+  const stops = [...document.querySelectorAll('[data-queue-stop]')];
+  const statuses = () => [...document.querySelectorAll('[data-queue-status]')].map(label => label.textContent);
+  const selectedLabel = () => document.getElementById('videoSelected').textContent;
+  assert.equal(starts.length, 2);
+  assert.ok(starts.every(button => button.disabled), 'no selection means both start entries are unavailable');
+  assert.ok(starts.every(button => button.textContent === '开始刷课'));
+  assert.equal(document.getElementById('videoConfirm'), null, 'video runs no longer require a review dialog');
+  assert.equal(document.getElementById('optAggressive').checked, false);
+
+  const list = document.getElementById('list');
+  list.innerHTML = context.XiaoyaPanelVideo.checkbox(tasks[0]);
+  const rowCheck = list.querySelector('[data-video-id]');
+  assert.ok(rowCheck, 'media rows receive an individual checkbox');
+  rowCheck.checked = true;
+  const change = document.createEvent('Event');
+  change.initEvent('change', true, true);
+  rowCheck.dispatchEvent(change);
+  await flush();
+  assert.equal(selectedLabel(), '已选 1 项');
+  assert.match(context.XiaoyaPanelVideo.checkbox(tasks[3]), /disabled/, 'duplicate course/node routes stay unavailable even when hidden or finished');
+  document.getElementById('videoClear').click();
+  await flush();
+  assert.equal(selectedLabel(), '已选 0 项');
+
+  // The list contains only one row here, simulating another row hidden in a collapsed course card.
+  list.innerHTML = context.XiaoyaPanelVideo.checkbox(tasks[0]);
+  document.getElementById('videoAll').click();
+  await flush();
+  assert.equal(selectedLabel(), '已选 2 项');
+  assert.ok(starts.every(button => !button.disabled));
+  assert.equal(messages.length, 0, 'selecting never starts the queue');
+
+  state.query = '章节二';
+  await context.XiaoyaPanelVideo.render();
+  assert.equal(selectedLabel(), '已选 2 项（筛选外 1 项）', 'selections survive filter changes');
+  assert.equal(document.getElementById('videoActions').hidden, false, 'hidden selections remain reachable outside the media filter');
+  starts[0].click();
+  state.query = 'no match after click';
+  await flush();
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].type, 'start-selected');
+  assert.equal(messages[0].tabId, 7);
+  assert.equal(messages[0].account, 'account-a');
+  assert.deepEqual(messages[0].selection.map(target => target.id), ['c12:v2', 'c11:v1']);
+  assert.deepEqual(messages[0].options, { rate: 1.25, background: true, muted: true, recursive: true, autoNext: false, aggressive: false });
+  assert.ok(starts.every(button => button.disabled));
+  assert.ok(stops.every(button => !button.disabled));
+  assert.equal(selectedLabel(), '已选 2 项（筛选外 2 项）', 'the checked list stays visible while its run is locked');
+  assert.match(statuses()[0], /运行中/);
+
+  stops[1].click();
+  await flush();
+  assert.deepEqual(messages.at(-1), { type: 'stop', tabId: 7 });
+  assert.deepEqual(statuses(), ['已停止', '已停止']);
+
+  // Settings starts directly too, and backend errors remain visible at both entry areas.
+  startError = '模拟后端拒绝启动';
+  starts[1].click();
+  await flush();
+  assert.equal(messages.at(-1).type, 'start-selected');
+  assert.deepEqual([...document.querySelectorAll('[data-video-message]')].map(node => node.textContent), [startError, startError]);
+  startError = null;
+
+  const toggle = document.getElementById('optAggressive');
+  const toggleChange = () => {
+    const event = document.createEvent('Event');
+    event.initEvent('change', true, true);
+    toggle.dispatchEvent(event);
+  };
+  toggle.checked = true;
+  toggleChange();
+  assert.equal(toggle.checked, false, 'the toggle stays off until positive opt-in');
+  assert.equal(dialog.open, true);
+  assert.equal(document.getElementById('aggressiveConfirmText').textContent, '本次操作不会增加学习时长');
+  document.getElementById('aggressiveCancel').click();
+  assert.equal(toggle.checked, false, 'cancel leaves aggressive mode off');
+  assert.equal(dialog.open, false);
+
+  toggle.checked = true;
+  toggleChange();
+  dialog.close();
+  assert.equal(toggle.checked, false, 'closing the warning without enabling remains off');
+  toggle.checked = true;
+  toggleChange();
+  document.getElementById('aggressiveEnable').click();
+  assert.equal(toggle.checked, true, 'only the positive button enables aggressive mode');
+  assert.equal(dialog.open, false);
+  starts[1].click();
+  await flush();
+  assert.deepEqual(messages.at(-1).options, { rate: 1.25, background: true, muted: true, recursive: true, autoNext: false, aggressive: true });
+  assert.match(statuses()[0], /激进模式/);
+  assert.equal(localWrites, 0, 'aggressive opt-in stays panel-local');
+
+  stops[0].click();
+  await flush();
+
+  pending = { tabId: 8, status: '等待登录后获取任务…' };
+  onChanged({ xiaoyaPendingScan: { newValue: pending } }, 'session');
+  await flush();
+  assert.deepEqual(statuses(), ['等待登录后获取任务…', '等待登录后获取任务…']);
+  assert.ok(starts.every(button => button.disabled));
+  assert.ok(stops.every(button => !button.disabled));
+
+  pending = null;
+  run = { ...run, enabled: false };
+  onChanged({ xiaoyaPendingScan: { oldValue: pending, newValue: null }, xiaoyaRun: { newValue: run } }, 'session');
+  await flush();
+  state.account = 'account-b';
+  await context.XiaoyaPanelVideo.render();
+  assert.equal(selectedLabel(), '已选 0 项', 'an account change clears the old account selection');
+  assert.match(fs.readFileSync(path.join(root, 'extension/sidepanel.js'), 'utf8'), /XiaoyaPanelVideo\?\.checkbox\(task\)/);
 });
 
 test('real PPT heading has no title attribute and preserves double spaces', async () => {

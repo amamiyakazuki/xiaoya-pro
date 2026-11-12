@@ -37,11 +37,15 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .spin svg { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.brief { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 16px; padding: 7px 12px; border-radius: 12px; background: linear-gradient(120deg, #d9e6ff 0%, #dfeefc 55%, #dcf2f7 100%); color: #4a5f88; font-size: 13px; text-align: left; flex: none; transition: filter .18s; }
+.brief-wrap { position: relative; margin: 0 16px; flex: none; }
+.brief { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; border-radius: 12px; background: linear-gradient(120deg, #d9e6ff 0%, #dfeefc 55%, #dcf2f7 100%); color: #4a5f88; font-size: 13px; text-align: left; transition: filter .18s; }
 .brief:hover { filter: brightness(1.02) saturate(1.1); }
 .brief b { color: #2360d0; font-weight: 600; }
 .brief .chev { transform: rotate(90deg); }
 .brief[aria-expanded="true"] .chev { transform: rotate(-90deg); }
+.brief-tip { position: absolute; top: 100%; inset-inline-start: 0; max-width: 100%; z-index: 2; padding: 6px 9px; border-radius: 8px; background: var(--ink); color: #fff; font-size: 12px; overflow-wrap: anywhere; visibility: hidden; }
+.brief-wrap:not(.tip-dismissed):hover .brief-tip { visibility: visible; transition: visibility 0s .5s; }
+.brief-wrap:not(.tip-dismissed) .brief:focus-visible + .brief-tip { visibility: visible; transition: none; }
 
 .weekwrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .22s ease; margin: 0 16px; flex: none; }
 .weekwrap.on { grid-template-rows: 1fr; }
@@ -142,6 +146,7 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .switch input:checked + i::after { transform: translateX(15px); }
 .switch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
 #rate { width: 164px; font-size: 12.5px; flex: none; }
+.quick-queue { flex: none; margin: 0 16px 6px; border-radius: 12px; background: var(--surface); }
 .queue { display: flex; gap: 8px; padding: 8px 10px; }
 .queue button { flex: 1; padding: 6px; border-radius: 10px; background: var(--faint); color: var(--accent); font-weight: 500; }
 .queue button:disabled { color: var(--muted); cursor: default; opacity: .6; }
@@ -175,6 +180,25 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 
 /* Whole-task selection and the explicitly confirmed answering batch. */
 .answer-check { flex:0 0 auto; width:16px; height:16px; margin:0 0 0 9px; accent-color:#367cc4; cursor:pointer; }
+.video-check { flex:0 0 auto; width:16px; height:16px; margin:0 0 0 4px; accent-color:#2f8f78; cursor:pointer; }
+.video-check:disabled { cursor:default; opacity:.55; }
+.video-toolbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px 2px; font-size:12px; }
+.video-toolbar strong { margin-right:auto; font-weight:600; white-space:nowrap; }
+.video-toolbar button { border:1px solid #c8ded9; border-radius:7px; background:white; padding:5px 8px; font:inherit; cursor:pointer; }
+.video-toolbar button:disabled { opacity:.5; cursor:default; }
+.video-toolbar #videoAll { background:#277d6b; color:white; border-color:#277d6b; }
+.video-toolbar #videoAll:disabled { opacity:.5; cursor:default; }
+.video-aggressive { display:flex; align-items:center; gap:7px; padding:5px 11px 7px; color:#76571a; font-size:12px; cursor:pointer; }
+.video-aggressive input { margin:0; accent-color:#b07916; }
+.video-aggressive input:disabled { opacity:.5; cursor:default; }
+.aggressive-actions { display:flex; justify-content:flex-end; gap:8px; }
+.aggressive-actions button { border:1px solid #d8c996; border-radius:7px; background:white; padding:6px 10px; font:inherit; cursor:pointer; }
+.aggressive-actions #aggressiveEnable { background:#a77b1a; border-color:#a77b1a; color:white; }
+#aggressiveConfirm { width:calc(100% - 32px); max-width:360px; border:1px solid #d8c996; border-radius:12px; padding:18px; background:#fffdf7; color:#443819; }
+#aggressiveConfirm::backdrop { background:rgba(20,40,60,.4); }
+#aggressiveConfirm p { margin:0 0 18px; font-size:14px; line-height:1.6; }
+.video-message:empty { display:none; }
+.video-message { margin:5px 10px 8px; color:#9b4d20; font-size:12px; white-space:pre-line; overflow-wrap:anywhere; }
 .answer-toolbar { padding:8px 14px; border-bottom:1px solid #d6e5f0; background:#eff7fc; font-size:12px; }
 .answer-toolbar > div { display:flex; align-items:center; gap:7px; margin:4px 0; flex-wrap:wrap; }
 .answer-toolbar button,.answer-actions button { border:1px solid #c3d9eb; border-radius:7px; background:white; padding:6px 9px; font:inherit; cursor:pointer; }

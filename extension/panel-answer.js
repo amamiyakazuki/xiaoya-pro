@@ -5,7 +5,8 @@
   const chosen = () => state.tasks.filter(task => selected.has(task.id) && batchModel.eligible(task));
   const visible = () => model.visibleTasks(state.tasks, filters(), Date.now()).filter(batchModel.eligible);
   const locked = () => starting || Boolean(batch?.enabled || batch?.inFlight);
-  const draftLocked = () => starting || Boolean(batch?.enabled) || openingDraft !== null;
+  const openingCurrentDraft = () => Boolean(openingDraft && openingDraft.batchId === batch?.id);
+  const draftLocked = () => starting || Boolean(batch?.enabled) || openingCurrentDraft();
   async function send(type, extra = {}) {
     const reply = await chrome.runtime.sendMessage({ type: `auto:${type}`, ...extra });
     if (!reply?.ok) throw Error(reply?.error || '后台未响应，请重新加载扩展。');
@@ -29,13 +30,13 @@
     const same = batch && batch.account === state.account;
     $('answerProgress').hidden = !same;
     if (same) {
-      $('answerStage').textContent = batch.message;
+      $('answerStage').textContent = batch.stage === 'finished' ? '本批处理完成，可以开始新批次。' : batch.message;
       $('answerResults').innerHTML = batch.tasks.map((task, index) => {
         const result = batch.results[index];
         const label = ({ waiting: '等待', done: '已提交', draft: '待补附件', pending: '待处理', uncertain: '待核对' })[result.status] || '等待';
         const draftButton = result.status === 'draft' && result.draftPage
-          ? `<button type="button" data-draft-index="${index}" ${draftLocked() ? 'disabled' : ''}>${openingDraft === index ? '正在核对原页面…' : '返回原答题页'}</button>`
-          : result.status === 'draft' ? '<span>原页面无法定位，请在小雅课程中手动核对草稿。</span>' : '';
+          ? `<button type="button" data-draft-index="${index}" ${draftLocked() ? 'disabled' : ''}>${openingCurrentDraft() && openingDraft.index === index ? '正在定位原页面…' : '返回原答题页（可选）'}</button>`
+          : result.status === 'draft' ? '<span>原页面无法定位，可稍后从小雅课程手动打开。</span>' : '';
         return `<li><strong>${esc(task.courseName)} · ${esc(task.name)}</strong><span>${label}：${esc(result.message)}</span>${draftButton}</li>`;
       }).join('');
     }
@@ -86,16 +87,18 @@
     const index = Number(button.dataset.draftIndex);
     const task = batch.tasks[index], result = batch.results[index], batchId = batch.id;
     if (!task || result?.status !== 'draft' || !result.draftPage) return;
-    openingDraft = index;
-    $('answerMessage').textContent = '正在核对原答题页和账号…';
+    const request = { batchId, index };
+    openingDraft = request;
+    const showStatus = message => { if (batch?.id === batchId && !starting) $('answerMessage').textContent = message; };
+    showStatus('正在定位原答题页…');
     render();
     try {
       await send('open-draft', { batchId, taskId: task.id });
-      $('answerMessage').textContent = '已返回原答题页，请核对草稿并补齐附件。';
+      showStatus('已返回原答题页。');
     } catch (error) {
-      $('answerMessage').textContent = error.message;
+      showStatus(error.message);
     } finally {
-      openingDraft = null;
+      if (openingDraft === request) openingDraft = null;
       render();
     }
   });

@@ -188,9 +188,10 @@ test('a later question failure pauses the batch if the previous question was alr
  assert.equal(result.results[1].status,'waiting');
  assert.deepEqual(f.calls.filter(c=>c[0]==='open'),[['open','t1']]);
 });
-test('video queue and duplicate task identity reject before any page action',async()=>{
- const f=fixture({videoActive:async()=>true});await assert.rejects(f.start(),/视频/);assert.equal(f.calls.length,0);
- const g=fixture();await assert.rejects(g.start([task(),{...task(),id:'duplicate'}]),/重复/);
+test('duplicate task identity rejects before any page action',async()=>{
+ const f=fixture();
+ await assert.rejects(f.start([task(),{...task(),id:'duplicate'}]),/重复/);
+ assert.equal(f.calls.length,0);
 });
 function page({manual='',total=1,permit=async()=>true,delay=async()=>{}}={}) {
  const {document,window}=parseHTML(`<html><body><div id="survey_page"><span class="score_sub_title">共${total}题（100分）</span><form id="question_content"><div class="question"><div class="exam_question_stem"><div class="stem_title">填入结果 <span class="xy_richtext_blank_number_warp">(1) ____</span> 和 <span class="xy_richtext_blank_number_warp">(2) ____</span></div><span class="score">[填空题 100 分]</span></div><div id="question_123" class="question_gap_subject"><div class="_label">填空1:</div><textarea>${manual}</textarea><div class="_label">填空2:</div><textarea></textarea></div></div><button type="submit">提交</button></form></div></body></html>`);
@@ -295,32 +296,52 @@ test('draft focus checks the original tab and document again before switching wi
  await driver.open(base,new AbortController().signal);
  const reference=driver.draftReference();
  assert.deepEqual(reference,{tabId:1,pageToken:'page'});
- await assert.rejects(driver.focusDraft(base,reference,async()=>{reloaded=true;return true;}),/原答题页/);
+ const canFocus=()=>true;
+ await assert.rejects(driver.focusDraft(base,reference,async()=>{reloaded=true;return true;},canFocus),/原答题页/);
  assert.deepEqual(calls,[]);
  reloaded=false;
- await assert.rejects(driver.focusDraft(base,reference,async()=>{throw Error('账号已变化');}),/账号/);
- assert.equal(await driver.focusDraft(base,reference,async()=>false),false);
+ await assert.rejects(driver.focusDraft(base,reference,async()=>{throw Error('账号已变化');},canFocus),/账号/);
+ assert.equal(await driver.focusDraft(base,reference,async()=>false,canFocus),false);
+ assert.equal(await driver.focusDraft(base,reference,async()=>true,()=>false),false);
  assert.deepEqual(calls,[]);
- await driver.focusDraft(base,reference,async()=>{calls.push(['verify']);return true;});
+ await driver.focusDraft(base,reference,async()=>{calls.push(['verify']);return true;},canFocus);
  assert.deepEqual(calls,[['verify'],['tab',1,{active:true}],['window',9,{focused:true}]]);
  tab={...tab,url:B.canonical(task(2)).url};
- await assert.rejects(driver.focusDraft(base,reference,async()=>{}),/原答题页/);
+ await assert.rejects(driver.focusDraft(base,reference,async()=>true,canFocus),/原答题页/);
 });
 test('driver only follows a matching child of its dedicated tab and validates permit sender',async()=>{
  let created,clock=0;let childFn;const tabs=new Map();let n=0;const base=B.canonical(task());const api={tabs:{onCreated:{addListener(fn){childFn=fn;}},async create(o){created=o;tabs.set(1,{id:1,url:o.url});return tabs.get(1);},async get(id){return tabs.get(id);},async sendMessage(id,m){if(m.action==='inspect')return {ok:true,snapshot:{pageToken:`p${id}`,pageKind:id===3?'paper':'resource',canEnter:id===1,complete:id===3}};if(m.action==='enter'){childFn({id:2,openerTabId:1});tabs.set(2,{id:2,url:'https://evil.test'});childFn({id:3,openerTabId:1});tabs.set(3,{id:3,url:'https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/11/1/3/4'});}return {ok:true};}}};
- const d=createDriver({chrome:api,getBatchId:()=> 'b',now:()=>clock,delay:async()=>{clock+=500;},timeout:1000});await d.open(base,new AbortController().signal);assert.equal(created.url,base.url);assert.equal((await d.enter(base,new AbortController().signal)).complete,true);
+ const d=createDriver({chrome:api,getBatchId:()=> 'b',now:()=>clock,delay:async()=>{clock+=500;},timeout:1000});await d.open(base,new AbortController().signal);assert.equal(created.url,base.url);assert.equal(d.usesTab(1),true);assert.equal((await d.enter(base,new AbortController().signal)).complete,true);
+ assert.equal(d.usesTab(3),true);assert.equal(d.usesTab(2),false);
  assert.equal(await d.permits({pageToken:'p3'},{tab:{id:3},frameId:0,url:tabs.get(3).url},base),true);assert.equal(await d.permits({pageToken:'p3'},{tab:{id:2},frameId:0,url:tabs.get(3).url},base),false);
 });
 function background(options={}) {
- const vm=require('node:vm'),fs=require('node:fs');let listener;const data={},events=[],gate=options.gate;
+ const vm=require('node:vm'),fs=require('node:fs');let listener;
+ const data={},events=[],videoEvents=[],gate=options.gate,answerPage=deferred();
+ const tabs=new Map([
+  [1,{id:1,url:'https://whut.ai-augmented.com/app/jx-web/mycourse',status:'complete'}],
+  [2,{id:2,url:B.canonical(task()).url,status:'complete'}],
+  [3,{id:3,url:'https://whut.ai-augmented.com/app/jx-web/mycourse/11/resource/_/9',pendingUrl:B.canonical(task()).url}],
+  [4,{id:4,url:'https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/11/4/3/4',lastAccessed:99}]
+ ]);
  const local={async get(){return structuredClone(data);},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
  const context=vm.createContext({URL,structuredClone,AbortController,setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto,importScripts(){},
- XiaoyaAnswerBatch:B,XiaoyaAnswerDriver:{createDriver:()=>({async open(){events.push('open');await new Promise(()=>{});},halt(){events.push('halt');},permits:async()=>false})},
+ XiaoyaAnswerBatch:B,XiaoyaAnswerDriver:{createDriver:()=>({async open(){events.push('open');return answerPage.promise;},halt(){events.push('halt');answerPage.resolve();},usesTab:id=>id===2,permits:async()=>false})},
  XiaoyaTaskData:{createTaskStore:()=>({async load(){if(gate)await gate.promise;return {status:'ok',account:'account',tasks:[task()]};},currentAccount:async()=> 'account'})},
  XiaoyaAIService:{createService:()=>({available:async()=>true,handle:async()=>({ok:true}),querySaved:async()=>({solution:{kind:'text',text:'2'}})})},
- chrome:{runtime:{id:'ext',getURL:p=>'chrome-extension://ext/'+p,onMessage:{addListener(fn){listener=fn;}}},storage:{local,session:local},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{onUpdated:{addListener(){}},onRemoved:{addListener(){}}}}});
+ chrome:{runtime:{id:'ext',getURL:p=>'chrome-extension://ext/'+p,onMessage:{addListener(fn){listener=fn;}}},storage:{local,session:local},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{
+  onUpdated:{addListener(){}},onRemoved:{addListener(){}},
+  async get(id){return tabs.get(id);},
+  async query(){return [...tabs.values()];},
+  async update(id,changes){Object.assign(tabs.get(id),changes);},
+  async sendMessage(id,message){
+   videoEvents.push([id,message.type]);
+   if(message.type==='health' && options.videoGate) await options.videoGate.promise;
+   return {ok:true,protocol:6,loggedInHome:true};
+  }
+ }}});
  vm.runInContext(fs.readFileSync(require.resolve('../extension/worker.js'),'utf8'),context);
- return {data,events,send:(message,sender={id:'ext',url:'chrome-extension://ext/sidepanel.html'})=>new Promise(resolve=>listener(message,sender,resolve))};
+ return {data,events,videoEvents,send:(message,sender={id:'ext',url:'chrome-extension://ext/sidepanel.html'})=>new Promise(resolve=>listener(message,sender,resolve))};
 }
 test('background rejects content-page batch control and unselected/unknown task IDs',async()=>{
  const b=background();assert.equal((await b.send({type:'auto:start',ids:['t1'],account:'account'},{id:'ext',url:'https://whut.ai-augmented.com/',tab:{id:1}})).ok,false);
@@ -329,9 +350,75 @@ test('background rejects content-page batch control and unselected/unknown task 
 test('background stop bypasses pending task refresh and cancels the queued start',async()=>{
  const gate=deferred(),b=background({gate});const start=b.send({type:'auto:start',ids:['t1'],account:'account'});await pause();assert.equal((await b.send({type:'auto:stop'})).ok,true);gate.resolve();assert.match((await start).error,/取消/);assert.ok(!b.events.includes('open'));
 });
-test('background blocks video start and AI config changes while answer batch owns execution',async()=>{
- const b=background();assert.equal((await b.send({type:'auto:start',ids:['t1'],account:'account'})).ok,true);await pause();
- assert.match((await b.send({type:'start',tabId:1})).error,/自动作答/);assert.match((await b.send({type:'ai:save'})).error,/自动作答/);await b.send({type:'auto:stop'});
+test('video and answer queues can start in either order and stop independently',async()=>{
+ for (const videoFirst of [true,false]) {
+  const b=background();
+  const videoStart={type:'start',tabId:1,options:{background:true}};
+  const answerStart={type:'auto:start',ids:['t1'],account:'account'};
+  for (const command of videoFirst?[videoStart,answerStart]:[answerStart,videoStart]) assert.equal((await b.send(command)).ok,true);
+  assert.equal(b.data.xiaoyaRun.enabled,true);
+  assert.equal(b.data[B.KEY].enabled,true);
+  assert.equal(b.data.xiaoyaRun.tabId,1);
+  assert.ok(b.events.includes('open'));
+  assert.match((await b.send({type:'ai:save'})).error,/自动作答/);
+  if (videoFirst) {
+   await b.send({type:'auto:stop'});
+   assert.equal(b.data.xiaoyaRun.enabled,true);
+   assert.deepEqual(b.videoEvents,[[1,'health'],[1,'run']]);
+   await b.send({type:'stop',tabId:1});
+  } else {
+   await b.send({type:'stop',tabId:1});
+   assert.equal(b.data[B.KEY].enabled,true);
+   assert.ok(!b.events.includes('halt'));
+   await b.send({type:'auto:stop'});
+  }
+  assert.equal(b.data[B.KEY].enabled,false);
+  assert.equal(b.data.xiaoyaRun.enabled,false);
+  assert.deepEqual(b.videoEvents.at(-1),[1,'halt']);
+ }
+});
+test('video startup and stop are independent of an answer start waiting for a task refresh',async()=>{
+ const gate=deferred(),b=background({gate});
+ const answer=b.send({type:'auto:start',ids:['t1'],account:'account'});
+ await pause();
+ assert.equal((await b.send({type:'start',tabId:1})).ok,true);
+ assert.equal(b.data.xiaoyaRun.enabled,true);
+ assert.equal((await b.send({type:'stop',tabId:1})).ok,true);
+ assert.equal(b.data.xiaoyaRun.enabled,false);
+ gate.resolve();
+ assert.equal((await answer).ok,true);
+ await b.send({type:'auto:stop'});
+});
+test('answer startup can proceed while the video page is still connecting',async()=>{
+ const videoGate=deferred(),b=background({videoGate});
+ const video=b.send({type:'start',tabId:1});
+ await pause();
+ assert.deepEqual(b.videoEvents,[[1,'health']]);
+ assert.equal((await b.send({type:'auto:start',ids:['t1'],account:'account'})).ok,true);
+ assert.equal(b.data[B.KEY].enabled,true);
+ videoGate.resolve();
+ assert.equal((await video).ok,true);
+ await b.send({type:'auto:stop'});
+});
+test('video start and scan keep the active answer page and its pending navigation untouched',async()=>{
+ const b=background();
+ assert.equal((await b.send({type:'auto:start',ids:['t1'],account:'account'})).ok,true);
+ for (const tabId of [2,3]) assert.match((await b.send({type:'start',tabId})).error,/答题执行页/);
+ assert.deepEqual(b.videoEvents,[]);
+ assert.equal((await b.send({type:'scan',tabId:2})).ok,true);
+ assert.equal(b.data.xiaoyaRun.tabId,1);
+ assert.ok(b.videoEvents.every(([tabId])=>tabId===1));
+ await b.send({type:'auto:stop'});
+});
+test('a pending video scan does not resume on an answer execution tab',async()=>{
+ const b=background();
+ await b.send({type:'auto:start',ids:['t1'],account:'account'});
+ b.data.xiaoyaPendingScan={tabId:2,sourceTabId:1};
+ const result=await b.send({type:'login-ready'},{id:'ext',tab:{id:2}});
+ assert.match(result.error,/原待办页正在答题/);
+ assert.equal(b.data.xiaoyaPendingScan,undefined);
+ assert.deepEqual(b.videoEvents,[]);
+ await b.send({type:'auto:stop'});
 });
 test('background rejects foreign page mutation permits',async()=>{
  const b=background();assert.equal((await b.send({type:'auto:permit',batchId:'forged',taskId:'t1',action:'submit'},{id:'other'})).allowed,false);
@@ -539,6 +626,18 @@ function attachmentBatch(options={}) {
  f.driver.inspect=async()=>{const s=await original.inspect();return active==='t1'?add(s):s;};
  return f;
 }
+test('a batch ending with a draft can immediately start another batch without opening the draft',async()=>{
+ const f=attachmentBatch({driver:{draftReference:()=>({tabId:12,pageToken:'attachment-page'})}});
+ await f.start([task()]);
+ const first=await settled(f.engine);
+ assert.equal(first.stage,'finished');
+ assert.equal(first.results[0].status,'draft');
+ assert.equal(first.inFlight,false);
+ await f.start([task(2)]);
+ const next=await settled(f.engine);
+ assert.deepEqual(next.results.map(result=>result.status),['done']);
+ assert.deepEqual(f.calls.filter(call=>call[0]==='submit').map(call=>call[1]),['t2']);
+});
 test('attachment task fills only other blanks, retains partial manual answers and files, then continues without submitting',async()=>{
  const p=page({manual:'人工首空',total:2});
  const attachment=p.document.createElement('div');attachment.className='question';attachment.innerHTML='<div class="exam_question_stem"><span class="sequence">2.</span><div class="stem_title">附件题干不要发送</div><span class="score">[附件题 50分]</span></div><div id="question_999" class="question_attach_subject"><span>existing.py 上传成功</span><input type="file"></div>';

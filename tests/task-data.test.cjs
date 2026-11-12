@@ -81,6 +81,22 @@ test('taskUrl follows the platform route and falls back to the course page witho
   assert.equal(data.taskUrl('7', null, null), `${ORIGIN}/app/jx-web/mycourse/7`);
 });
 
+test('video queue requires an available named resource and keeps large node IDs exact', () => {
+  const course = { id: '1234567890123456789', name: '课程甲' };
+  const task = data.normalizeTask({ task_id: '11', node_id: '9876543210987654321', name: '第一讲', task_type: 1 }, course);
+  assert.equal(data.mediaProblem(task, T0), '');
+  assert.deepEqual(data.mediaTarget(task), {
+    id: `${course.id}:11`, courseId: course.id, courseName: course.name, nodeId: '9876543210987654321', name: '第一讲',
+    url: `${ORIGIN}/app/jx-web/mycourse/${course.id}/resource/_/9876543210987654321`
+  });
+  assert.match(data.mediaProblem({ ...task, nodeId: null }, T0), /定位/);
+  assert.match(data.mediaProblem({ ...task, resourceId: '..' }, T0), /定位/);
+  assert.match(data.mediaProblem({ ...task, name: '未知任务名称' }, T0), /名称/);
+  assert.match(data.mediaProblem({ ...task, finished: true }, T0), /已完成/);
+  assert.match(data.mediaProblem({ ...task, start: T0 + 1 }, T0), /未开放/);
+  assert.match(data.mediaProblem({ ...task, end: T0 }, T0), /截止/);
+});
+
 test('refresh reads every course from notices, joins names, and also returns finished tasks', async () => {
   const f = harness({ routes: {
     queryTaskNotices: ok({ student_tasks: [noticeRow(1), noticeRow(2, { finish: 2, finish_time: PAST, end_time: PAST }), noticeRow(3, { end_time: PAST })] }),

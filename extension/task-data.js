@@ -38,6 +38,23 @@
     return `${ORIGIN}/app/jx-web/mycourse/${course}/resource/${encodeURIComponent(resourceId || '_')}/${encodeURIComponent(nodeId)}`;
   }
 
+  function mediaProblem(task, now = Date.now()) {
+    if (task?.typeCode !== 1) return '此任务不属于视频课件。';
+    if (task.finished) return '已完成';
+    if (task.start != null && task.start > now) return '尚未开放';
+    if (task.end != null && task.end <= now) return '已截止';
+    if (typeof task.id !== 'string' || !task.id || !/^\d+$/.test(String(task.courseId)) || !/^\d+$/.test(String(task.nodeId))
+      || (task.resourceId && !/^[\w-]+$/.test(String(task.resourceId)))) return '无法定位具体课件';
+    if (typeof task.name !== 'string' || !task.name.trim() || task.name === UNKNOWN_TASK_NAME) return '无法确认任务名称';
+    return '';
+  }
+
+  function mediaTarget(task) {
+    const { id, name, courseName, resourceId } = task;
+    const courseId = String(task.courseId), nodeId = String(task.nodeId);
+    return { id, name, courseName, courseId, nodeId, url: taskUrl(courseId, resourceId, nodeId) };
+  }
+
   function normalizeTask(raw, course, names) {
     const taskId = raw.task_id ?? null;
     const nodeId = raw.node_id ?? null;
@@ -306,7 +323,8 @@
     };
   }
 
-  const api = { createTaskStore, normalizeTask, taskStatus, taskUrl, readTabToken, readPageToken, CACHE_TTL_MS, MAX_CONCURRENT_REQUESTS };
+  const api = { createTaskStore, normalizeTask, taskStatus, taskUrl, mediaProblem, mediaTarget,
+    readTabToken, readPageToken, CACHE_TTL_MS, MAX_CONCURRENT_REQUESTS };
   root.XiaoyaTaskData = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(globalThis);

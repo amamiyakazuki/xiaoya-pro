@@ -53,6 +53,7 @@ function row(task, showCourse, now) {
   const on = state.pins.has(task.id);
   return `<li class="row${state.opened === task.id ? ' now' : ''}">
     ${globalThis.XiaoyaPanelAnswer?.checkbox(task) || ''}
+    ${globalThis.XiaoyaPanelVideo?.checkbox(task) || ''}
     <button class="open" data-act="open" data-id="${esc(task.id)}" data-key="o-${esc(task.id)}" title="${esc(display.tip)}">
       <span class="ticon" style="--h:${look.h}">${look.icon}</span>
       <span class="name">${esc(task.name)}</span>${showCourse ? `<span class="rcourse">${esc(task.courseName)}</span>` : ''}<span class="when ${display.tone}">${esc(display.time)}</span>
@@ -120,6 +121,7 @@ function renderList(animate) {
   if (active) document.querySelector(`[data-key="${CSS.escape(active)}"]`)?.focus();
   updateFold();
   globalThis.XiaoyaPanelAnswer?.render();
+  globalThis.XiaoyaPanelVideo?.render();
 }
 
 function updateFold() {
@@ -160,13 +162,15 @@ function countdownText(end) {
 }
 function tick() {
   const el = $('countdown');
-  if (!el) return;
-  const { next } = model.brief(state.tasks, Date.now());
+  const tip = $('briefTip');
+  const next = el && model.brief(state.tasks, Date.now()).next;
+  const label = next ? `最近截止：${next.name}` : '';
+  if (tip.textContent !== label) tip.textContent = label;
+  tip.hidden = !next;
   if (next) el.textContent = countdownText(next.end);
 }
 function renderBrief() {
   const { today, next } = model.brief(state.tasks, Date.now());
-  $('brief').title = next ? `最近截止：${next.name}` : '';
   const text = !state.hasData ? '<span>还没有任务数据</span>' : `<span>今天截止 <b>${today}</b> 项${next ? ' · 最近 <b id="countdown"></b>' : ''}</span>`;
   $('brief').innerHTML = text + CHEVRON;
   tick();
@@ -216,7 +220,7 @@ async function openTask(task) {
   renderList(false);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const run = (await chrome.storage.session.get(RUN_KEY))[RUN_KEY];
-  if (!globalThis.XiaoyaPanelAnswer?.busy() && model.openTarget(tab, run) === 'same') await chrome.tabs.update(tab.id, { url: task.url });
+  if (!globalThis.XiaoyaPanelAnswer?.busy() && !globalThis.XiaoyaPanelVideo?.busy() && model.openTarget(tab, run) === 'same') await chrome.tabs.update(tab.id, { url: task.url });
   else await chrome.tabs.create({ url: task.url });
 }
 
@@ -267,7 +271,10 @@ $('week').addEventListener('click', event => {
   state.tab = 'pending';
   renderWeek(); renderCounts(); renderList(true);
 });
+$('briefWrap').addEventListener('pointerenter', () => $('briefWrap').classList.remove('tip-dismissed'));
+$('brief').addEventListener('focus', () => $('briefWrap').classList.remove('tip-dismissed'));
 $('brief').addEventListener('click', () => {
+  $('briefWrap').classList.add('tip-dismissed');
   const on = !$('weekwrap').classList.contains('on');
   $('weekwrap').classList.toggle('on', on);
   $('brief').setAttribute('aria-expanded', on);
@@ -290,7 +297,11 @@ $('search').addEventListener('input', event => { state.query = event.target.valu
 $('refresh').addEventListener('click', () => update(true));
 $('gear').addEventListener('click', () => { $('sheet').classList.add('on'); $('closeSheet').focus(); });
 $('closeSheet').addEventListener('click', closeSheet);
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && $('sheet').classList.contains('on')) closeSheet(); });
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  if ($('sheet').classList.contains('on')) closeSheet();
+  else $('briefWrap').classList.add('tip-dismissed');
+});
 $('notice').addEventListener('click', event => {
   const action = event.target.dataset.notice;
   if (action === 'retry') update(true);

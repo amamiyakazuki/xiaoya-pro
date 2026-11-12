@@ -16,6 +16,11 @@
   let homeSignature = '';
   let homeStableSince = 0;
   let homeActionAt = 0;
+  let selectedHalted = false;
+  let selectedBackground = false;
+  let selectedVideo = null;
+  let selectedAggressiveAttempt = null;
+  const selectedAggressiveAckTimeout = 15000;
   const homePath = '/app/jx-web/mycourse';
   const supported = /\.(mp4|webm|m4v|mov|pptx?|pdf|docx?)$/i;
   const route = () => {
@@ -61,12 +66,71 @@
     run.logs = [...run.logs.slice(-39), { time: Date.now(), text }];
     void save();
   }
+  function clearSelectedEffects() {
+    if (selectedBackground) background(false);
+    selectedBackground = false;
+    selectedVideo?.pause();
+    selectedVideo = null;
+  }
   function stop(text) {
     run.enabled = false;
-    background(false);
-    document.querySelectorAll('video').forEach(video => video.pause());
-    log(text);
-    void save();
+    if (run.mode === 'selected') clearSelectedEffects();
+    else {
+      background(false);
+      document.querySelectorAll('video').forEach(video => video.pause());
+    }
+    if (text === lastStatus) void save();
+    else log(text);
+  }
+
+  function matchesSelectedName(name, expectedName) {
+    const actual = normalizeName(name), expected = normalizeName(expectedName);
+    return supported.test(actual) && (actual === expected || (!supported.test(expected) && actual.replace(supported, '') === expected));
+  }
+
+  async function completeSelected(active) {
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'selected-advance', runId: active.id, index: active.selectionIndex });
+      if (run !== active || !active.enabled) return;
+      if (!result?.ok) return stop(result?.error || '无法确认所选任务的完成状态，队列已暂停。');
+      active.enabled = false;
+      clearSelectedEffects();
+    } catch {
+      if (run === active && active.enabled) stop('无法连接视频课件队列，已暂停。');
+    }
+  }
+  function visibleElement(element) {
+    if (!element || element.hidden === true || element.getAttribute?.('aria-hidden') === 'true') return false;
+    if (typeof element.getClientRects === 'function' && element.getClientRects().length === 0) return false;
+    const visibility = window.getComputedStyle?.(element).visibility;
+    return visibility !== 'hidden' && visibility !== 'collapse';
+  }
+  function hasVisibleDialog() {
+    return [...document.querySelectorAll('.ant-modal, dialog[open], [role="dialog"][aria-modal="true"]')]
+      .some(visibleElement);
+  }
+  function tryAggressiveSelectedCompletion(active, now) {
+    const attempt = selectedAggressiveAttempt;
+    if (attempt?.runId === active.id && attempt.index === active.selectionIndex) {
+      if (now - attempt.at >= selectedAggressiveAckTimeout) {
+        return stop('平台尚未确认完成，队列已暂停，请核对当前页面。');
+      }
+      return log('已请求平台完成，等待页面确认；未确认前不会切换。');
+    }
+
+    const controls = [...document.querySelectorAll('.ta_icon_btn')].filter(element =>
+      element.textContent.trim() === '点我完成任务'
+      && visibleElement(element)
+      && element.disabled !== true
+      && element.getAttribute?.('aria-disabled') !== 'true'
+      && !element.closest?.('[inert], [aria-hidden="true"], [aria-disabled="true"]')
+      && !element.classList?.contains('disabled')
+      && !element.classList?.contains('is-disabled'));
+    if (controls.length !== 1 || hasVisibleDialog()) return waitForPage(now, '平台完成按钮尚未显示或暂不可用');
+
+    selectedAggressiveAttempt = { runId: active.id, index: active.selectionIndex, at: now };
+    controls[0].click();
+    log('已请求平台完成，等待页面确认；未确认前不会切换。');
   }
   function rows() {
     return [...document.querySelectorAll('.group-resource-node')].map(row => {
@@ -179,14 +243,20 @@
   }
   async function tick() {
     if (busy || !run?.enabled) return;
+    const active = run;
+    const selected = active.mode === 'selected';
+    const selectedTarget = selected ? active.selection[active.selectionIndex] : null;
     busy = true;
     try {
       const now = Date.now();
       const info = route();
       const atHome = location.pathname.replace(/\/$/, '') === homePath;
+      if (selected && (!selectedTarget || info?.course !== selectedTarget.courseId || info?.file !== selectedTarget.nodeId)) {
+        return stop(`当前页面与清单中的「${selectedTarget?.name || '所选任务'}」地址不一致，队列已暂停。`);
+      }
       if (!info && !(run.mode === 'home' && atHome)) return stop('已离开课程资源或首页，队列停止。');
-      if (run.mode !== 'home' && run.course && run.course !== info.course) return stop('课程已切换，队列停止。');
-      if (info) run.course = info.course;
+      if (!selected && run.mode !== 'home' && run.course && run.course !== info.course) return stop('课程已切换，队列停止。');
+      if (info && !selected) run.course = info.course;
       if (location.href !== lastUrl) {
         lastUrl = location.href;
         arrived = now;
@@ -198,7 +268,12 @@
         homeSignature = '';
         homeStableSince = 0;
         homeActionAt = 0;
-        await save();
+        const stored = await save();
+        if (selected && run === active && active.enabled && !stored?.accepted) {
+          active.enabled = false;
+          clearSelectedEffects();
+        }
+        if (run !== active || !active.enabled) return;
       }
       if (transition && !atHome) {
         if (now - transition.at > 15000) stop('页面未成功切换，请手动打开目标任务后重新开始。');
@@ -210,8 +285,11 @@
       if (/验证码|人机验证|登录已过期|登录失效|重新登录/.test(text)) return stop('需要验证或重新登录，请手动处理。');
       if (run.mode === 'home' && atHome) return await readHome(now);
       if (run.mode === 'home' && !info.file) return waitForPage(now, '首页待办尚未打开到具体资源');
-      if (!info.file) return await next(info);
+      if (!selected && !info.file) return await next(info);
       const name = resourceName();
+      if (selected && !matchesSelectedName(name, selectedTarget.name)) {
+        return waitForPage(now, `未识别到清单中的资源「${selectedTarget.name}」或该类型不受支持`);
+      }
       const target = run.homeTask?.target;
       if (run.mode === 'home' && target && (target.course !== info.course || target.file !== info.file)) {
         return stop(`资源地址与选中待办不一致，已暂停。预期课程/资源：${target.course}/${target.file}；实际：${info.course}/${info.file}`);
@@ -222,6 +300,7 @@
       }
       if (!supported.test(normalizeName(name))) return waitForPage(now, `无法识别资源标题或类型：${JSON.stringify(name)}`);
       if (finished()) {
+        if (selected) return await completeSelected(active);
         if (!run.completed.includes(location.pathname)) run.completed.push(location.pathname);
         if (!run.visited.includes(`${info.folder}/${name}`)) run.visited.push(`${info.folder}/${name}`);
         log(`平台已确认完成：${name}`);
@@ -236,6 +315,13 @@
           return;
         }
         return await next(info);
+      }
+      if (selected && active.options.aggressive === true) {
+        return tryAggressiveSelectedCompletion(active, now);
+      }
+      if (selected && active.options.background && !selectedBackground) {
+        selectedBackground = true;
+        background(true);
       }
       const timingHint = document.querySelector('.ant-modal .finish_task_info');
       if (timingHint) {
@@ -256,13 +342,19 @@
       const video = document.querySelector('video');
       let ready = false;
       if (video) {
+        if (selected) selectedVideo = video;
         video.playbackRate = run.options.rate;
         if (run.options.muted) video.muted = true;
         if (video.error) return stop('视频加载失败，请检查网络后重新开始。');
         if (!video.ended && video.paused && now - lastPlay > 5000) {
           lastPlay = now;
           try { await video.play(); }
-          catch { log('浏览器阻止自动播放，请手动点击播放，或启用静音自动播放。'); return; }
+          catch { if (active.enabled) log('浏览器阻止自动播放，请手动点击播放，或启用静音自动播放。'); return; }
+          if (run !== active || !active.enabled) {
+            if (selected) video.pause();
+            return;
+          }
+          if (selected && location.href !== lastUrl) return stop('播放时资源页面已切换，队列已暂停。');
         }
         ready = video.ended || (Number.isFinite(video.duration) && video.duration > 0 && video.currentTime >= video.duration - 0.5);
         if (!ready) log(`播放中：${name} · ${run.options.rate} 倍速`);
@@ -294,28 +386,40 @@
       complete.click();
       log(timingProbeAt && !taskTiming ? '正在读取当前课件的实际时长要求…' : '已请求完成，等待平台确认；未确认前不会切换。');
     } catch (error) {
-      stop(`运行暂停：${error.message}`);
+      if (run === active && active.enabled) stop(`运行暂停：${error.message}`);
     } finally { busy = false; }
   }
   function start(value) {
     run = value;
+    if (run.mode === 'selected') {
+      selectedHalted = false;
+      selectedAggressiveAttempt = null;
+    }
     arrived = Date.now();
     lastUrl = '';
     lastStatus = '';
     transition = null;
-    background(run.enabled && run.options.background);
-    log(run.mode === 'home' ? '正在读取首页跨课程待办…' : '队列已启动，正在读取当前目录…');
+    if (run.mode !== 'selected') {
+      background(run.enabled && run.options.background);
+      log(run.mode === 'home' ? '正在读取首页跨课程待办…' : '队列已启动，正在读取当前目录…');
+    }
     void tick();
   }
   chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message.type === 'health') reply({ ok: true, protocol,
       loggedInHome: location.pathname.replace(/\/$/, '') === homePath && !!document.querySelector('[title="点击查看/刷新待完成学习任务"]') });
-    if (message.type === 'run') { start(message.run); reply({ ok: true }); }
-    if (message.type === 'halt' && run) { stop('已手动停止。'); reply({ ok: true }); }
-    if (message.type === 'tick') void tick();
+    if (message.type === 'run' && message.run?.mode !== 'selected') { start(message.run); reply({ ok: true }); }
+    if (message.type === 'halt' && run && run.mode !== 'selected') { stop('已手动停止。'); reply({ ok: true }); }
+    if (message.type === 'tick' && run?.mode !== 'selected') void tick();
+    if (message.type === 'selected-halt') {
+      selectedHalted = true;
+      if (run?.mode === 'selected' && run.enabled) stop('已手动停止。');
+      reply({ ok: true });
+    }
+    if (message.type === 'selected-tick' && run?.mode === 'selected') void tick();
   });
-  chrome.runtime.sendMessage({ type: 'get' }).then(result => {
-    if (result?.run?.enabled) start(result.run);
+  chrome.runtime.sendMessage({ type: 'get', selectedProtocol: 1 }).then(result => {
+    if (result?.run?.enabled && !(selectedHalted && result.run.mode === 'selected')) start(result.run);
   }).catch(() => {});
   setInterval(() => void tick(), 1000);
   setInterval(() => {

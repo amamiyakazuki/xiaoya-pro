@@ -4,12 +4,14 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const draftTask = { id: '11:task-1', courseId: '11', nodeId: '21', taskId: '31', name: '作业', courseName: '课程', typeCode: 2 };
+const nextTask = { ...draftTask, id: '11:task-2', nodeId: '22', taskId: '32' };
 const draftPage = { tabId: 9, pageToken: 'page-token' };
 
 function fixture() {
   let listener;
   let account = 'account-a';
   let beforeVerify = null;
+  let beforeActivation = null;
   let batch = {
     id: 'batch-a', account,
     tasks: [draftTask],
@@ -20,13 +22,16 @@ function fixture() {
   let activations = 0;
   const calls = [];
   const driver = {
-    async focusDraft(task, reference, verifyBatch) {
+    async focusDraft(task, reference, verifyBatch, canFocus) {
       calls.push({ task, reference });
       if (beforeVerify) await beforeVerify();
       const allowed = await verifyBatch();
       calls.push({ allowed });
-      if (allowed) activations += 1;
-      return allowed;
+      if (!allowed) return false;
+      if (beforeActivation) await beforeActivation();
+      if (!canFocus()) return false;
+      activations += 1;
+      return true;
     }
   };
   const chrome = {
@@ -51,12 +56,23 @@ function fixture() {
   const context = vm.createContext({
     chrome, URL, crypto: require('node:crypto'), console, setTimeout, clearTimeout,
     XiaoyaAIService: { createService: () => ({}) },
-    XiaoyaTaskData: { createTaskStore: () => ({ async currentAccount() { return account; } }) },
+    XiaoyaTaskData: { createTaskStore: () => ({
+      async currentAccount() { return account; },
+      async load() { return { status: 'ok', account, tasks: [nextTask] }; }
+    }) },
     XiaoyaAnswerDriver: { createDriver: () => driver },
-    XiaoyaAnswerBatch: { createEngine: () => ({
-      async get() { return structuredClone(batch); },
-      busy() { return busy || Boolean(batch.enabled); }
-    }) }
+    XiaoyaAnswerBatch: {
+      eligible: task => Boolean(task),
+      createEngine: () => ({
+        async get() { return structuredClone(batch); },
+        getId() { return batch.id; },
+        busy() { return busy || Boolean(batch.enabled); },
+        async start({ account, tasks }) {
+          batch = { id: 'batch-b', account, tasks, results: [], enabled: true, inFlight: false };
+          return { ok: true, batch: structuredClone(batch) };
+        }
+      })
+    }
   });
   vm.runInContext(fs.readFileSync(require.resolve('../extension/worker.js'), 'utf8'), context);
   async function send(message, sender = { id: 'extension-id', url: 'chrome-extension://extension-id/sidepanel.html' }) {
@@ -71,6 +87,7 @@ function fixture() {
     setAccount(value) { account = value; },
     setBatch(value) { batch = value; },
     beforeVerify(callback) { beforeVerify = callback; },
+    beforeActivation(callback) { beforeActivation = callback; },
     setBusy(value) { busy = value; }
   };
 }
@@ -120,6 +137,22 @@ test('an unrelated pending receipt does not prevent returning to an already open
   const result = await f.send({ type: 'auto:open-draft', batchId: 'batch-a', taskId: draftTask.id });
   assert.equal(result.ok, true);
   assert.equal(f.activations, 1);
+});
+
+test('a new batch starts without waiting for a pending optional draft lookup', async () => {
+  const f = fixture();
+  let locate, resume;
+  const locating = new Promise(resolve => { locate = resolve; });
+  const lookup = new Promise(resolve => { resume = resolve; });
+  f.beforeActivation(async () => { locate(); await lookup; });
+  const draft = f.send({ type: 'auto:open-draft', batchId: 'batch-a', taskId: draftTask.id });
+  await locating;
+  const next = await f.send({ type: 'auto:start', account: 'account-a', ids: [nextTask.id] });
+  resume();
+  assert.equal(next.ok, true);
+  assert.equal(next.batch.id, 'batch-b');
+  assert.match((await draft).error, /已取消返回/);
+  assert.equal(f.activations, 0);
 });
 
 test('non-panel senders cannot request draft-page focus', async () => {

@@ -11,6 +11,7 @@ let mockOpened = savedFixtureState.openedTasks || [];
 let mockEngine;
 let mockAdapter;
 let mockCurrent;
+let mockVideoRun;
 let mockPage;
 let mockTabId = 0;
 const mockDraftPages = new Map();
@@ -19,7 +20,9 @@ const taskDefinitions = [
   { id: 't1', nodeId: '1', typeCode: 2, type: '作业', name: '普通作业一' },
   { id: 't2', nodeId: '2', typeCode: 3, type: '练习', name: '普通练习二' },
   { id: 't3', nodeId: '3', typeCode: 2, type: '作业', name: '附件作业三' },
-  { id: 't4', nodeId: '4', typeCode: 2, type: '作业', name: '未选作业四' }
+  { id: 't4', nodeId: '4', typeCode: 2, type: '作业', name: '未选作业四' },
+  { id: 'v1', nodeId: '101', resourceId: 'media-101', typeCode: 1, type: '视频课件', name: '模拟视频一' },
+  { id: 'v2', nodeId: '102', resourceId: 'media-102', typeCode: 1, type: '视频课件', name: '模拟课件二' }
 ];
 
 const mockTasks = taskDefinitions.map(task => ({
@@ -30,7 +33,7 @@ const mockTasks = taskDefinitions.map(task => ({
   start: Date.now() - 1000,
   end: Date.now() + 86400000,
   finishedAt: null,
-  url: `https://whut.ai-augmented.com/app/jx-web/mycourse/11/resource/_/${task.nodeId}`
+  url: `https://whut.ai-augmented.com/app/jx-web/mycourse/11/resource/${task.resourceId || '_'}/${task.nodeId}`
 }));
 
 function readFixtureState() {
@@ -95,7 +98,7 @@ window.chrome = {
   storage: {
     local: mockStorage,
     onChanged: { addListener(listener) { mockChanges.push(listener); } },
-    session: { async get() { return {}; } }
+    session: { async get() { return { xiaoyaRun: mockVideoRun }; } }
   },
   runtime: {
     id: 'fixture',
@@ -110,6 +113,20 @@ window.chrome = {
       if (message.type === 'auto:get') return { ok: true, batch: await mockEngine.get() };
       if (message.type === 'auto:stop') return mockEngine.stop();
       if (message.type === 'auto:verify') return mockEngine.verify();
+      if (message.type === 'start-selected') {
+        if (message.account !== mockAccount) return { ok: false, error: '模拟账号已变化，请重新选择。' };
+        const selected = message.selection.map(target => mockTasks.find(task => task.id === target.id));
+        if (selected.some(task => !task || task.typeCode !== 1)) return { ok: false, error: '模拟清单中有无法定位的媒体任务。' };
+        mockVideoRun = {
+          mode: 'selected', tabId: message.tabId, account: message.account, selection: message.selection,
+          selectionIndex: 0, enabled: true, status: `正在打开：${message.selection[0].name}`, completed: [], logs: []
+        };
+        return { ok: true };
+      }
+      if (message.type === 'stop' && mockVideoRun) {
+        mockVideoRun = { ...mockVideoRun, enabled: false, status: '已停止本地模拟视频队列' };
+        return { ok: true };
+      }
       if (message.type === 'auto:open-draft') {
         const batch = await mockEngine.get();
         const index = batch?.tasks.findIndex(task => task.id === message.taskId);
