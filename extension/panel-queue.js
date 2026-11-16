@@ -126,7 +126,7 @@
     });
   }
 
-  // 直接提交完成状态的清单：必须是已勾选、身份完整、未完成且未截止的自主观看任务。
+  // 直接提交完成状态的清单只接受已勾选、身份完整、仍可提交的自主观看任务。
   function finishTargets() {
     const rows = selectedRows().filter(row => row.task);
     if (rows.length !== selected.size) return { rows: [], problem: '所选清单已变化，请刷新任务后重新选择。' };

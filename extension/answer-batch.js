@@ -3,11 +3,13 @@
   const KEY = 'xiaoyaAnswerBatch';
   const ORIGIN = 'https://whut.ai-augmented.com';
   const id = value => typeof value === 'string' && /^\d+$/.test(value);
-  function eligible(task) {
-    return Boolean(task && [2, 3, 4].includes(task.typeCode) && !task.finished && id(String(task.courseId || '')) && id(String(task.nodeId || '')) && (!task.taskId || id(String(task.taskId))));
+  function eligible(task, now = Date.now()) {
+    return Boolean(task && [2, 3, 4].includes(task.typeCode) && !task.finished
+      && (!Number.isFinite(task.end) || task.end > now || task.allowLateSubmission === true)
+      && id(String(task.courseId || '')) && id(String(task.nodeId || '')) && (!task.taskId || id(String(task.taskId))));
   }
-  function canonical(task) {
-    if (!eligible(task)) throw Error('任务类型或身份不完整，不能开始。');
+  function canonical(task, now = Date.now()) {
+    if (!eligible(task, now)) throw Error('任务当前不可执行或身份不完整，不能开始。');
     return { id: String(task.id), courseId: String(task.courseId), nodeId: String(task.nodeId), taskId: task.taskId ? String(task.taskId) : null,
       name: String(task.name || '未命名任务').slice(0, 300), courseName: String(task.courseName || '未命名课程').slice(0, 200), typeCode: task.typeCode,
       url: `${ORIGIN}/app/jx-web/mycourse/${task.courseId}/resource/_/${task.nodeId}` };
@@ -21,9 +23,9 @@
         path[2] === 'course_paper' && path[3] === 'mycourse' && path.length === 8 && path[4] === task.courseId && path[5] === task.nodeId);
     } catch { return false; }
   }
-  function selection(tasks, selected, account, previousAccount) {
+  function selection(tasks, selected, account, previousAccount, now = Date.now()) {
     if (account !== previousAccount) return [];
-    return [...new Set(selected)].filter(key => tasks.some(task => task.id === key && eligible(task)));
+    return [...new Set(selected)].filter(key => tasks.some(task => task.id === key && eligible(task, now)));
   }
   function questionLabel(item, index) {
     const number = Number.isSafeInteger(item.number) && item.number > 0 ? item.number : index + 1;
@@ -170,7 +172,8 @@
         if (!await aiReady()) throw Error('请先保存可用的 AI 配置并授权服务域名。');
         if (!input?.account || await getAccount() !== input.account) throw Error('账号已变化，请刷新并重新选择。');
         if (!Array.isArray(input.tasks) || !input.tasks.length || input.tasks.length > 200) throw Error('请选择 1–200 份任务。');
-        const tasks = input.tasks.map(canonical);
+        const checkTime = now();
+        const tasks = input.tasks.map(task => canonical(task, checkTime));
         if (new Set(tasks.map(t => `${t.courseId}:${t.nodeId}`)).size !== tasks.length) throw Error('清单包含重复任务。');
         if (ticket !== epoch) throw Error('启动已取消。');
         const run = { controller: new AbortController() }; job = run;

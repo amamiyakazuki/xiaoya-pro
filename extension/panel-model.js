@@ -2,7 +2,7 @@
 // 任务面板的显示逻辑：筛选、排序、分组和时间文案。不依赖页面。
 (function (root) {
   const taskData = root.XiaoyaTaskData || require('./task-data.js');
-  const { taskStatus } = taskData;
+  const { taskStatus, canSubmitLate } = taskData;
   const ORIGIN = 'https://whut.ai-augmented.com';
   const WEEK = '日一二三四五六';
   const DAY_MS = 864e5;
@@ -48,10 +48,11 @@
     return `还剩 ${Math.floor(hours / 24)} 天`;
   }
 
-  function matches(task, filters, now, chipKey = filters.chip) {
-    const chip = CHIPS.find(item => item.key === chipKey);
+  function matches(task, status, filters, now) {
+    const chip = CHIPS.find(item => item.key === filters.chip);
     if (chip.types && !chip.types.includes(task.type)) return false;
-    if (filters.day !== null && taskStatus(task, now) === 'pending' && (task.end === null || dayDiff(task.end, now) !== filters.day)) return false;
+    if (filters.day !== null && status === 'pending' && (task.end === null || dayDiff(task.end, now) !== filters.day)) return false;
+    if (filters.lateOnly && status === 'overdue' && !canSubmitLate(task, now)) return false;
     const query = filters.query.trim().toLowerCase();
     return !query || `${task.name} ${task.courseName}`.toLowerCase().includes(query);
   }
@@ -64,7 +65,7 @@
 
   function visibleTasks(tasks, filters, now) {
     const value = sortValue[filters.tab];
-    return tasks.filter(task => taskStatus(task, now) === filters.tab && matches(task, filters, now)).sort((a, b) => {
+    return tasks.filter(task => taskStatus(task, now) === filters.tab && matches(task, filters.tab, filters, now)).sort((a, b) => {
       const av = value(a), bv = value(b);
       return av === bv ? 0 : av < bv ? -1 : 1;
     });
@@ -72,7 +73,10 @@
 
   function tabCounts(tasks, filters, now) {
     const counts = { pending: 0, done: 0, overdue: 0 };
-    for (const task of tasks) if (matches(task, filters, now)) counts[taskStatus(task, now)] += 1;
+    for (const task of tasks) {
+      const status = taskStatus(task, now);
+      if (matches(task, status, filters, now)) counts[status] += 1;
+    }
     return counts;
   }
 
@@ -136,7 +140,10 @@
     const status = taskStatus(task, now);
     const period = `${task.courseName} · ${task.type} · ${task.start === null ? '开始时间未知' : `${monthDay(task.start)} 开始`}`;
     if (status === 'done') return { time: formatTime(task.finishedAt, now), tone: 'good', tip: `${task.name}\n${period}\n已完成 · 截止 ${formatTime(task.end, now)}` };
-    if (status === 'overdue') return { time: formatTime(task.end, now), tone: 'hot', tip: `${task.name}\n${period}\n未完成 · 已截止` };
+    if (status === 'overdue') {
+      const late = canSubmitLate(task, now);
+      return { time: formatTime(task.end, now), tone: late ? 'warm' : 'hot', tip: `${task.name}\n${period}\n未完成 · 已截止${late ? ' · 可补交' : ''}`, canSubmitLate: late };
+    }
     const notStarted = task.start !== null && task.start > now ? '未开始 · ' : '';
     return { time: formatTime(task.end, now), tone: heat(task.end, now), tip: `${task.name}\n${period}\n${notStarted}${remaining(task.end, now)}` };
   }

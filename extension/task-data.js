@@ -30,7 +30,11 @@
 
   function taskStatus(task, now) {
     if (task.finished) return 'done';
-    return task.end !== null && task.end <= now ? 'overdue' : 'pending';
+    return task.end != null && task.end <= now ? 'overdue' : 'pending';
+  }
+
+  function canSubmitLate(task, now = Date.now()) {
+    return task.allowLateSubmission === true && taskStatus(task, now) === 'overdue';
   }
 
   function taskUrl(courseId, resourceId, nodeId) {
@@ -43,18 +47,18 @@
     if (task?.typeCode !== 1) return '此任务不属于视频课件。';
     if (task.finished) return '已完成';
     if (task.start != null && task.start > now) return '尚未开放';
-    if (task.end != null && task.end <= now) return '已截止';
+    if (taskStatus(task, now) === 'overdue' && task.allowLateSubmission !== true) return '已截止';
     if (typeof task.id !== 'string' || !task.id || !/^\d+$/.test(String(task.courseId)) || !/^\d+$/.test(String(task.nodeId))
       || (task.resourceId && !/^[\w-]+$/.test(String(task.resourceId)))) return '无法定位具体课件';
     if (typeof task.name !== 'string' || !task.name.trim() || task.name === UNKNOWN_TASK_NAME) return '无法确认任务名称';
     return '';
   }
 
-  // 直接提交完成状态的前提：自主观看（task_type 1）、未完成、未到截止时间、标识齐全。
+  // 直接提交仅处理标识齐全、未完成且仍可提交的自主观看任务。
   function finishProblem(task, now = Date.now()) {
     if (task?.typeCode !== 1) return '此任务不属于视频课件。';
     if (task.finished) return '已完成';
-    if (task.end !== null && task.end !== undefined && task.end <= now) return '已截止';
+    if (taskStatus(task, now) === 'overdue' && task.allowLateSubmission !== true) return '已截止';
     if (!/^\d+$/.test(String(task.courseId ?? '')) || !/^\d+$/.test(String(task.nodeId ?? ''))) return '无法定位具体任务';
     if (!/^\d+$/.test(String(task.taskId ?? ''))) return '缺少任务 ID，无法提交';
     return '';
@@ -83,6 +87,7 @@
       typeCode,
       type: TYPE_LABELS[typeCode] || '其他',
       finished,
+      allowLateSubmission: raw.is_allow_after_submitted === true,
       start: parseTime(raw.start_time),
       end,
       // 平台对未完成的任务也会返回 finish_time，只有已完成时才有意义。
@@ -210,7 +215,7 @@
       if (matched.length !== 1) throw new Error('平台任务列表中找不到这条任务，可能已变化。');
       if (Number(matched[0].finish) === 2) return { status: 'already' };
       const end = parseTime(matched[0].end_time);
-      if (end !== null && end <= now()) throw new Error('已到截止时间。');
+      if (end !== null && end <= now() && matched[0].is_allow_after_submitted !== true) throw new Error('已到截止时间。');
       const body = await post(PATHS.finish, token, {
         group_id: String(task.courseId), node_id: String(task.nodeId), task_id: String(task.taskId)
       });
@@ -381,7 +386,7 @@
     };
   }
 
-  const api = { createTaskStore, normalizeTask, taskStatus, taskUrl, mediaProblem, mediaTarget, finishProblem,
+  const api = { createTaskStore, normalizeTask, taskStatus, canSubmitLate, taskUrl, mediaProblem, mediaTarget, finishProblem,
     readTabToken, readPageToken, CACHE_TTL_MS, MAX_CONCURRENT_REQUESTS };
   root.XiaoyaTaskData = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

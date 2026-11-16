@@ -36,12 +36,13 @@ function store({ token = 'tok', accountId = '9', notices = [], postResponse = { 
 const platformRow = (overrides = {}) => ({ group_id: '42', node_id: '11', task_id: '99', task_type: 1,
   finish: 0, end_time: new Date(NOW + 3_600_000).toISOString(), ...overrides });
 
-test('finishProblem 只放行未完成、未截止的自主观看任务', () => {
+test('finishProblem 只放行未完成且仍可提交的自主观看任务', () => {
   const { finishProblem } = taskData;
   assert.equal(finishProblem(task(), NOW), '');
   assert.match(finishProblem(task({ typeCode: 2 }), NOW), /不属于视频课件/);
   assert.equal(finishProblem(task({ finished: true }), NOW), '已完成');
   assert.equal(finishProblem(task({ end: NOW - 1 }), NOW), '已截止');
+  assert.equal(finishProblem(task({ end: NOW - 1, allowLateSubmission: true }), NOW), '');
   assert.equal(finishProblem(task({ end: null }), NOW), '');
   assert.match(finishProblem(task({ taskId: null }), NOW), /缺少任务 ID/);
   assert.match(finishProblem(task({ courseId: 'x' }), NOW), /无法定位/);
@@ -74,6 +75,18 @@ test('平台侧已截止或任务已消失时不发 POST', async () => {
   const missing = store({ notices: [platformRow({ task_id: '404' })] });
   await assert.rejects(missing.store.finishTask(task(), '9'), /找不到这条任务/);
   assert.equal(missing.posts().length, 0);
+});
+
+test('补交自主观看任务时以平台最新的补交权限为准', async () => {
+  const selected = task({ end: NOW - 1, allowLateSubmission: true });
+  const end_time = new Date(selected.end).toISOString();
+  const allowed = store({ notices: [platformRow({ end_time, is_allow_after_submitted: true })] });
+  assert.deepEqual(await allowed.store.finishTask(selected, '9'), { status: 'submitted' });
+  assert.equal(allowed.posts().length, 1);
+
+  const denied = store({ notices: [platformRow({ end_time, is_allow_after_submitted: false })] });
+  await assert.rejects(denied.store.finishTask(selected, '9'), /已到截止时间/);
+  assert.equal(denied.posts().length, 0);
 });
 
 test('账号变化、接口失败和未登录都明确报错', async () => {

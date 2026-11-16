@@ -41,6 +41,7 @@
         </div>
       </div>
       <span class="list-count" id="listCount"></span>
+      <label class="late-filter" id="lateFilter" hidden><input id="lateOnly" type="checkbox" aria-controls="list">仅显示可补交</label>
       <button class="fold" id="fold" type="button" aria-label="全部收起" title="全部收起"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.5 3.5-3 3.5 3M4.5 9.5l3.5 3 3.5-3"/></svg><span>全部收起</span></button>
     </div>
 
@@ -65,6 +66,14 @@
     </dialog>
     <div class="scroller" id="scroller">
       <div class="notice" id="notice" hidden></div>
+      <div class="late-notice" id="lateNotice" hidden>
+        <button class="late-notice-open" id="lateNoticeOpen" type="button" aria-controls="list">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5m0 2.5h.01"/></svg>
+          <span>目前存在截止可补交的作业</span>
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg>
+        </button>
+        <button class="late-notice-snooze" id="lateNoticeSnooze" type="button">一周内不显示</button>
+      </div>
       <div class="list" id="list"></div>
     </div>
 

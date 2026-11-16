@@ -67,6 +67,23 @@ test('tab counts respect the active filters', () => {
   assert.deepEqual(model.tabCounts(tasks, filters({ chip: 'homework' }), NOW), { pending: 1, done: 0, overdue: 1 });
 });
 
+test('only-late filter keeps overdue tasks with platform permission and leaves other statuses intact', () => {
+  const tasks = [
+    task({ name: '可补交视频', type: '视频课件', typeCode: 1, end: at(5), allowLateSubmission: true }),
+    task({ name: '可补交测验', type: '测验', typeCode: 4, end: at(7), allowLateSubmission: true }),
+    task({ name: '禁止补交', end: at(6), allowLateSubmission: false }),
+    task({ name: '未标记', end: at(2) }),
+    task({ name: '未截止', allowLateSubmission: true }),
+    task({ name: '已完成', end: at(7), finished: true, allowLateSubmission: true })
+  ];
+  const overdue = filters({ tab: 'overdue', lateOnly: true });
+  assert.deepEqual(names(model.visibleTasks(tasks, overdue, NOW)), ['可补交测验', '可补交视频']);
+  assert.deepEqual(names(model.visibleTasks(tasks, { ...overdue, chip: 'media' }, NOW)), ['可补交视频']);
+  assert.deepEqual(model.tabCounts(tasks, overdue, NOW), { pending: 1, done: 1, overdue: 2 });
+  assert.equal(model.rowDisplay(tasks[0], NOW).canSubmitLate, true);
+  assert.match(model.rowDisplay(tasks[0], NOW).tip, /已截止 · 可补交/);
+});
+
 test('brief counts today and finds the nearest deadline, ignoring overdue and undated tasks', () => {
   const tasks = [task({ name: '今天一', end: at(9, 18, 0) }), task({ name: '今天二', end: at(9) }), task({ name: '逾期', end: at(9, 8, 0) }), task({ name: '无截止', end: null })];
   const result = model.brief(tasks, NOW);

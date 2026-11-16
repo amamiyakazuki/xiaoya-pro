@@ -35,6 +35,23 @@ test('only stable whole-task identities are selectable; hidden selections persis
   assert.equal(B.matches('https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/11/1/3/4',B.canonical(task())),true);
   assert.equal(B.matches('https://whut.ai-augmented.com/app/jx-web/course_paper/mycourse/11/2/3/4',B.canonical(task())),false);
 });
+test('past-deadline assignments, exercises and tests require confirmed late submission eligibility', () => {
+  const now = 1_000;
+  const tasks = [
+    { ...task(1), typeCode: 2, end: now, allowLateSubmission: true },
+    { ...task(2), typeCode: 3, end: now - 1, allowLateSubmission: true },
+    { ...task(3), typeCode: 4, end: now, allowLateSubmission: true },
+    { ...task(4), end: now, allowLateSubmission: false },
+    { ...task(5), end: now - 1 },
+    { ...task(6), end: now - 1, allowLateSubmission: 'true' },
+    { ...task(7), end: now + 1 },
+    { ...task(8), end: null },
+    { ...task(9), end: now, allowLateSubmission: true, finished: true }
+  ];
+  assert.deepEqual(B.selection(tasks, tasks.map(item => item.id), 'a', 'a', now), ['t1', 't2', 't3', 't7', 't8']);
+  assert.equal(B.canonical(tasks[0], now).nodeId, '1');
+  assert.throws(() => B.canonical(tasks[3], now), /当前不可执行/);
+});
 test('confirmed subset completes query → fill → submit → receipt, never opens unselected tasks',async()=>{
  const f=fixture(); await f.start([task(2)]);const state=await settled(f.engine);
  assert.equal(state.stage,'finished');assert.equal(state.results[0].status,'done');
@@ -327,7 +344,7 @@ function background(options={}) {
  const local={async get(){return structuredClone(data);},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
  const context=vm.createContext({URL,structuredClone,AbortController,setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto,importScripts(){},
  XiaoyaAnswerBatch:B,XiaoyaAnswerDriver:{createDriver:()=>({async open(){events.push('open');return answerPage.promise;},halt(){events.push('halt');answerPage.resolve();},usesTab:id=>id===2,permits:async()=>false})},
- XiaoyaTaskData:{createTaskStore:()=>({async load(){if(gate)await gate.promise;return {status:'ok',account:'account',tasks:[task()]};},currentAccount:async()=> 'account'})},
+ XiaoyaTaskData:{createTaskStore:()=>({async load(){if(gate)await gate.promise;return {status:'ok',account:'account',tasks:options.tasks ?? [task()]};},currentAccount:async()=> 'account'})},
  XiaoyaAIService:{createService:()=>({available:async()=>true,handle:async()=>({ok:true}),querySaved:async()=>({solution:{kind:'text',text:'2'}})})},
  chrome:{runtime:{id:'ext',getURL:p=>'chrome-extension://ext/'+p,onMessage:{addListener(fn){listener=fn;}}},storage:{local,session:local},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{
   onUpdated:{addListener(){}},onRemoved:{addListener(){}},
@@ -346,6 +363,18 @@ function background(options={}) {
 test('background rejects content-page batch control and unselected/unknown task IDs',async()=>{
  const b=background();assert.equal((await b.send({type:'auto:start',ids:['t1'],account:'account'},{id:'ext',url:'https://whut.ai-augmented.com/',tab:{id:1}})).ok,false);
  assert.equal((await b.send({type:'auto:start',ids:['not-listed'],account:'account'})).ok,false);assert.deepEqual(b.events,[]);
+});
+test('background accepts only the late submission permission from its refreshed task list', async () => {
+  const ended = { ...task(), end: Date.now() - 1 };
+  const message = { type: 'auto:start', ids: ['t1'], account: 'account', allowLateSubmission: true };
+  const blocked = background({ tasks: [{ ...ended, allowLateSubmission: false }] });
+  assert.match((await blocked.send(message)).error, /不可执行/);
+  assert.deepEqual(blocked.events, []);
+
+  const allowed = background({ tasks: [{ ...ended, allowLateSubmission: true }] });
+  assert.equal((await allowed.send({ ...message, allowLateSubmission: false })).ok, true);
+  assert.ok(allowed.events.includes('open'));
+  await allowed.send({ type: 'auto:stop' });
 });
 test('background stop bypasses pending task refresh and cancels the queued start',async()=>{
  const gate=deferred(),b=background({gate});const start=b.send({type:'auto:start',ids:['t1'],account:'account'});await pause();assert.equal((await b.send({type:'auto:stop'})).ok,true);gate.resolve();assert.match((await start).error,/取消/);assert.ok(!b.events.includes('open'));
@@ -520,7 +549,9 @@ test('real result header with submission time and result badge is a receipt with
 });
 test('old submission time cannot mark a task done while resubmission or processing is active',async()=>{
  const p=page();const header=p.document.createElement('div');header.className='exam_paper_sub_title';header.innerHTML='<span>提交时间：2026/11/10 18:19:34</span><img alt="check_status">';p.document.querySelector('#survey_page').prepend(header);
- assert.equal((await p.command('inspect')).snapshot.submitted,false);const button=p.document.querySelector('button[type=submit]');button.disabled=true;button.textContent='提交中';assert.equal((await p.command('inspect')).snapshot.submitted,false);
+ p.location.pathname='/app/jx-web/course_paper/mycourse/11/1/3/4';p.location.search='?isNotPreview=false&site_id=fixture';
+ const {snapshot}=await p.command('inspect');assert.equal(snapshot.pageKind,'paper');assert.equal(snapshot.submitted,false);
+ const button=p.document.querySelector('button[type=submit]');button.disabled=true;button.textContent='提交中';assert.equal((await p.command('inspect')).snapshot.submitted,false);
 });
 test('manual verification of the last uncertain task finishes and releases the batch',async()=>{
  const f=fixture({driver:{verify:async()=>false}});await f.start();await settled(f.engine);await f.engine.verify();const state=await f.engine.get();assert.equal(state.stage,'finished');assert.equal(state.inFlight,false);assert.equal(state.results[0].status,'done');

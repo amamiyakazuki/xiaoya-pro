@@ -18,7 +18,10 @@
     });
   }
   const chosen = () => state.tasks.filter(task => selected.has(task.id) && batchModel.eligible(task));
-  const visible = () => model.visibleTasks(state.tasks, filters(), Date.now()).filter(batchModel.eligible);
+  const visible = () => {
+    const now = Date.now();
+    return model.visibleTasks(state.tasks, filters(), now).filter(task => batchModel.eligible(task, now));
+  };
   const locked = () => starting || Boolean(batch?.enabled || batch?.inFlight);
   const openingCurrentDraft = () => Boolean(openingDraft && openingDraft.batchId === batch?.id);
   const draftLocked = () => starting || Boolean(batch?.enabled) || openingCurrentDraft();

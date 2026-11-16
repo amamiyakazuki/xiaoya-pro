@@ -95,11 +95,16 @@ test('video queue requires an available named resource and keeps large node IDs 
   assert.match(data.mediaProblem({ ...task, finished: true }, T0), /已完成/);
   assert.match(data.mediaProblem({ ...task, start: T0 + 1 }, T0), /未开放/);
   assert.match(data.mediaProblem({ ...task, end: T0 }, T0), /截止/);
+  assert.equal(data.mediaProblem({ ...task, end: T0, allowLateSubmission: true }, T0), '');
 });
 
 test('refresh reads every course from notices, joins names, and also returns finished tasks', async () => {
   const f = harness({ routes: {
-    queryTaskNotices: ok({ student_tasks: [noticeRow(1), noticeRow(2, { finish: 2, finish_time: PAST, end_time: PAST }), noticeRow(3, { end_time: PAST })] }),
+    queryTaskNotices: ok({ student_tasks: [
+      noticeRow(1, { is_allow_after_submitted: true }),
+      noticeRow(2, { finish: 2, finish_time: PAST, end_time: PAST, is_allow_after_submitted: true }),
+      noticeRow(3, { end_time: PAST, is_allow_after_submitted: true })
+    ] }),
     queryCourseResources: ok([{ task_id: 1, name: '第一章作业' }, { task_id: 2, name: '第二章作业' }, { task_id: 3, name: '第三章作业' }])
   } });
   const result = await f.store.refresh();
@@ -108,6 +113,7 @@ test('refresh reads every course from notices, joins names, and also returns fin
   assert.deepEqual(result.failures, []);
   assert.deepEqual(result.tasks.map(task => task.name), ['第一章作业', '第二章作业', '第三章作业']);
   assert.deepEqual(result.tasks.map(task => data.taskStatus(task, T0)), ['pending', 'done', 'overdue']);
+  assert.deepEqual(result.tasks.map(task => data.canSubmitLate(task, T0)), [false, false, true]);
   assert.equal(result.tasks[0].courseName, '课程100');
   assert.equal(result.tasks[0].url, `${ORIGIN}/app/jx-web/mycourse/100/resource/_/n1`);
   assert.equal(result.tasks[1].finishedAt, Date.parse(PAST));

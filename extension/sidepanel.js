@@ -1,9 +1,12 @@
 'use strict';
 const model = globalThis.XiaoyaPanelModel;
-const store = globalThis.XiaoyaTaskData.createTaskStore();
+const { createTaskStore, canSubmitLate } = globalThis.XiaoyaTaskData;
+const store = createTaskStore();
 const { TABS, VIEWS, CHIPS, TYPE_ORDER } = model;
 const HOME = `${model.ORIGIN}/app/jx-web/mycourse`;
 const PREFS_KEY = 'xiaoyaPanelPrefs';
+const LATE_NOTICE_UNTIL_KEY = 'xiaoyaLateNoticeUntil';
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const RUN_KEY = 'xiaoyaRun';
 
 const $ = id => document.getElementById(id);
@@ -22,12 +25,12 @@ const CHEVRON = '<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="curre
 const star = on => `<svg viewBox="0 0 16 16" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="m8 1.8 1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/></svg>`;
 
 const state = {
-  tab: 'pending', chip: 'all', query: '', day: null, view: 'course',
+  tab: 'pending', chip: 'all', query: '', day: null, view: 'course', lateOnly: false, lateNoticeUntil: 0,
   collapsed: {}, pins: new Set(), account: null, opened: null,
   tasks: [], failures: [], hasData: false, fetchedAt: null,
   status: 'loading', message: '', refreshing: false
 };
-const filters = () => ({ tab: state.tab, chip: state.chip, query: state.query, day: state.day });
+const filters = () => ({ tab: state.tab, chip: state.chip, query: state.query, day: state.day, lateOnly: state.lateOnly });
 
 async function applyResult(result) {
   state.status = result.status;
@@ -56,7 +59,7 @@ function row(task, showCourse, now) {
     ${globalThis.XiaoyaPanelVideo?.checkbox(task) || ''}
     <button class="open" data-act="open" data-id="${esc(task.id)}" data-key="o-${esc(task.id)}" title="${esc(display.tip)}">
       <span class="ticon" style="--h:${look.h}">${look.icon}</span>
-      <span class="name">${esc(task.name)}</span>${showCourse ? `<span class="rcourse">${esc(task.courseName)}</span>` : ''}<span class="when ${display.tone}">${esc(display.time)}</span>
+      <span class="name">${esc(task.name)}</span>${showCourse ? `<span class="rcourse">${esc(task.courseName)}</span>` : ''}${display.canSubmitLate ? '<span class="late-tag">可补交</span>' : ''}<span class="when ${display.tone}">${esc(display.time)}</span>
     </button>
     <button class="pin" data-act="pin" data-id="${esc(task.id)}" data-key="p-${esc(task.id)}" aria-pressed="${on}" aria-label="${on ? '取消置顶' : '置顶'}：${esc(task.name)}">${star(on)}</button>
   </li>`;
@@ -96,7 +99,7 @@ const plainCard = (title, items, order, now) => `<article class="card" style="--
 
 function emptyHtml() {
   if (!state.hasData) return state.status === 'loading' || state.refreshing ? '<div class="loading">正在读取任务…</div>' : '';
-  const filtered = state.query || state.chip !== 'all' || state.day !== null;
+  const filtered = state.query || state.chip !== 'all' || state.day !== null || (state.tab === 'overdue' && state.lateOnly);
   return `<div class="empty"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="24" cy="24" r="19"/><path d="m16 25 6 6 11-13"/></svg><strong>${filtered ? '这个筛选下没有任务' : '这里没有任务'}</strong>${filtered ? '<button data-act="clear" data-key="clear">清除筛选</button>' : ''}</div>`;
 }
 
@@ -119,8 +122,13 @@ function renderList(animate) {
   list.classList.toggle('animate', Boolean(animate));
   list.innerHTML = html;
   if (active) document.querySelector(`[data-key="${CSS.escape(active)}"]`)?.focus();
-  $('listbar').hidden = !all.length;
+  const showLateFilter = state.tab === 'overdue' && state.hasData;
+  $('listbar').hidden = !all.length && !showLateFilter;
   $('listCount').textContent = `共 ${all.length} 项`;
+  $('lateFilter').hidden = !showLateFilter;
+  $('lateOnly').checked = state.lateOnly;
+  $('lateNotice').hidden = state.tab !== 'pending' || state.chip !== 'all' || now < state.lateNoticeUntil
+    || !state.tasks.some(task => canSubmitLate(task, now));
   updateFold();
   globalThis.XiaoyaPanelAnswer?.render();
   globalThis.XiaoyaPanelVideo?.render();
@@ -242,6 +250,12 @@ function clearDay() {
   renderWeek();
   return true;
 }
+function selectTab(tab) {
+  state.tab = tab;
+  clearDay();
+  renderCounts(); renderList(true);
+  $('scroller').scrollTop = 0;
+}
 function closeSheet() { $('sheet').classList.remove('on'); $('gear').focus(); }
 
 buildSeg($('tabs'), TABS.map(([key, label]) => `<button role="tab" data-tab="${key}">${label}<span></span></button>`).join(''), TABS.length);
@@ -250,11 +264,24 @@ $('chips').innerHTML = CHIPS.map(({ key, label }) => `<button class="chip" data-
 
 $('tabs').addEventListener('click', event => {
   const button = event.target.closest('[data-tab]');
-  if (!button) return;
-  state.tab = button.dataset.tab;
-  clearDay();
+  if (button) selectTab(button.dataset.tab);
+});
+$('lateOnly').addEventListener('change', event => {
+  state.lateOnly = event.target.checked;
   renderCounts(); renderList(true);
   $('scroller').scrollTop = 0;
+});
+$('lateNoticeOpen').addEventListener('click', () => {
+  state.lateOnly = true;
+  state.query = ''; $('search').value = '';
+  selectTab('overdue');
+  $('lateOnly').focus();
+});
+$('lateNoticeSnooze').addEventListener('click', () => {
+  state.lateNoticeUntil = Date.now() + WEEK_MS;
+  $('lateNotice').hidden = true;
+  $('tabs').querySelector('[data-tab="pending"]').focus();
+  chrome.storage.local.set({ [LATE_NOTICE_UNTIL_KEY]: state.lateNoticeUntil }).catch(() => {});
 });
 $('view').addEventListener('click', event => {
   const button = event.target.closest('[data-view]');
@@ -333,6 +360,7 @@ $('list').addEventListener('click', event => {
     if (task) openTask(task);
   } else if (act === 'clear') {
     state.query = ''; state.chip = 'all'; state.day = null; $('search').value = '';
+    if (state.tab === 'overdue') state.lateOnly = false;
     renderWeek(); renderCounts(); renderList(true);
   }
 });
@@ -361,8 +389,10 @@ globalThis.XiaoyaPanelMarkDone = ids => {
 globalThis.XiaoyaPanelRefreshData = () => update(true);
 
 async function boot() {
-  const prefs = (await chrome.storage.local.get(PREFS_KEY))[PREFS_KEY];
+  const values = await chrome.storage.local.get([PREFS_KEY, LATE_NOTICE_UNTIL_KEY]).catch(() => ({}));
+  const prefs = values[PREFS_KEY];
   if (VIEWS.some(([key]) => key === prefs?.view)) state.view = prefs.view;
+  state.lateNoticeUntil = values[LATE_NOTICE_UNTIL_KEY] ?? 0;
   renderAll(false);
   const cached = await store.peek().catch(() => null);
   if (cached) { await applyResult(cached); renderAll(false); }

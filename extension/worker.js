@@ -64,7 +64,7 @@ async function handleAnswer(message, sender, ticket) {
   throw Error('未知批次操作。');
 }
 
-// 直接提交完成状态：只在激进模式下可用，仅处理自主观看（task_type 1）且仍未完成、未截止的任务。
+// 直接提交完成状态只在激进模式下可用，仅处理仍可提交的自主观看任务。
 async function finishSubmit(message, sender) {
   if (!answerPanel(sender)) throw Error('只能从任务面板提交完成状态。');
   if (message.aggressive !== true) throw Error('请先开启激进模式。');
