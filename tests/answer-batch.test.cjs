@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {parseHTML} = require('linkedom');
 require('../extension/ai-question.js');
 require('../extension/answer-dom.js');
+require('../extension/answer-media.js');
 const B = require('../extension/answer-batch.js');
 const {createAdapter} = require('../extension/answer-page.js');
 const {createDriver} = require('../extension/answer-driver.js');
@@ -58,10 +59,88 @@ test('confirmed subset completes query → fill → submit → receipt, never op
  assert.deepEqual(f.calls.map(c=>c[0]),['open','query','fill','submit','verify']);assert.equal(f.calls[0][1],'t2');
  assert.ok(!JSON.stringify(f.data).includes(q.stem));assert.ok(!JSON.stringify(f.data).includes('solution'));
 });
-test('all answers are collected before any write, and one AI failure skips the whole task',async()=>{
- let count=0;const f=fixture({query:async()=>{if(++count===2)throw Error('模拟服务失败');return {solution:{kind:'text',text:'2'}};}});
- const original=f.driver.open;f.driver.open=async t=>{const s=await original(t);s.questions.push({...s.questions[0],question:{...q,id:'question_124'}});return s;};
- await f.start();const state=await settled(f.engine);assert.equal(state.results[0].status,'pending');assert.equal(state.results[0].message,'第 2 题：模拟服务失败');assert.ok(!f.calls.some(c=>c[0]==='fill'||c[0]==='submit'));
+test('queries and fills question by question, retries a failed question once, and submits if retry succeeds',async()=>{
+ let q2Attempts=0, retryNote=''; const f=fixture({query:async(question,signal,instructions)=>{
+  f.calls.push(['query',question.id]);
+  if(question.id==='question_124'){
+   q2Attempts++;
+   if(q2Attempts===1)throw new AIError('answer');
+   retryNote=instructions||'';
+  }
+  return {solution:{kind:'text',text:'2'}};
+ }});
+ const original=f.driver.open;
+ f.driver.open=async t=>{const s=await original(t);s.questions.push({...s.questions[0],question:{...q,id:'question_124'},number:2});return s;};
+ f.driver.inspect=async()=>{const s=f.snapshot();s.questions.push({...s.questions[0],question:{...q,id:'question_124'},number:2});return s;};
+ await f.start();const state=await settled(f.engine);
+ assert.equal(state.results[0].status,'done');
+ assert.equal(q2Attempts,2);
+ assert.match(retryNote,/JSON/);
+ assert.deepEqual(f.calls.map(c=>c[0]),['open','query','fill','query','query','fill','submit','verify']);
+});
+test('a question that still fails after one retry is skipped as draft while other questions are filled and the next task continues',async()=>{
+ const states={question_123:'empty',question_124:'empty',question_125:'empty'};
+ const calls=[]; let active='t1';
+ const makePaper=()=>active==='t1'
+  ? {complete:true,partialSafe:true,fingerprint:'paper',questions:[123,124,125].map((id,i)=>({question:{...q,id:`question_${id}`},number:i+1,typeName:'简答题',state:states[`question_${id}`],writable:states[`question_${id}`]!=='done',fingerprint:`f${id}`}))}
+  : {complete:true,partialSafe:true,fingerprint:'paper2',questions:[{question:{...q,id:'question_200'},number:1,typeName:'简答题',state:states.question_200||'empty',writable:true,fingerprint:'f200'}]};
+ const driver={
+  async open(t){active=t.id;calls.push(['open',t.id]);return makePaper();},
+  async inspect(){return makePaper();},
+  async fill(t,item){calls.push(['fill',t.id,item.id]);states[item.id]='done';return {filled:true};},
+  async submit(t){calls.push(['submit',t.id]);},
+  async verify(){calls.push(['verify']);return true;},
+  draftReference:()=>({tabId:9,pageToken:'p1'})
+ };
+ const engine=B.createEngine({storage:{async get(){return {};},async set(){}},driver,getAccount:async()=>'account',uuid:()=>'batch',
+  query:async question=>{
+   calls.push(['query',question.id]);
+   if(question.id==='question_124')throw new AIError('answer');
+   return {solution:{kind:'text',text:'答案'}};
+  }});
+ await engine.start({account:'account',tasks:[task(1),task(2)]});
+ const state=await settled(engine);
+ assert.deepEqual(state.results.map(r=>r.status),['draft','done']);
+ assert.equal(state.results[0].needsReview,true);
+ assert.deepEqual(state.results[0].draftPage,{tabId:9,pageToken:'p1'});
+ assert.match(state.results[0].message,/第 2 题.*AI 回答无法对应/);
+ assert.match(state.results[0].message,/其余 2 题已答/);
+ assert.match(state.results[0].message,/未提交/);
+ assert.deepEqual(calls,[
+  ['open','t1'],['query','question_123'],['fill','t1','question_123'],
+  ['query','question_124'],['query','question_124'],
+  ['query','question_125'],['fill','t1','question_125'],
+  ['open','t2'],['query','question_200'],['fill','t2','question_200'],['submit','t2'],['verify']
+ ]);
+});
+test('global AI error after earlier writes pauses without retrying or querying later questions and keeps draft page',async()=>{
+ const states={question_123:'empty',question_124:'empty',question_125:'empty'};
+ const calls=[];
+ const makePaper=()=>({complete:true,partialSafe:true,fingerprint:'paper',questions:[123,124,125].map((id,i)=>({question:{...q,id:`question_${id}`},number:i+1,typeName:'简答题',state:states[`question_${id}`],writable:true,fingerprint:`f${id}`}))});
+ const driver={
+  async open(t){calls.push(['open',t.id]);return makePaper();},
+  async inspect(){return makePaper();},
+  async fill(t,item){calls.push(['fill',t.id,item.id]);states[item.id]='done';return {filled:true};},
+  async submit(t){calls.push(['submit',t.id]);},
+  async verify(){return true;},
+  draftReference:()=>({tabId:9,pageToken:'p1'})
+ };
+ const engine=B.createEngine({storage:{async get(){return {};},async set(){}},driver,getAccount:async()=>'account',uuid:()=>'batch',
+  query:async question=>{
+   calls.push(['query',question.id]);
+   if(question.id==='question_124')throw new AIError('rate');
+   return {solution:{kind:'text',text:'答案'}};
+  }});
+ await engine.start({account:'account',tasks:[task(1),task(2)]});
+ const state=await settled(engine);
+ assert.equal(state.stage,'paused');
+ assert.equal(state.results[0].status,'draft');
+ assert.equal(state.results[0].needsReview,true);
+ assert.deepEqual(state.results[0].draftPage,{tabId:9,pageToken:'p1'});
+ assert.match(state.results[0].message,/第 2 题.*429/);
+ assert.match(state.results[0].message,/部分答案/);
+ assert.equal(state.results[1].status,'waiting');
+ assert.deepEqual(calls,[['open','t1'],['query','question_123'],['fill','t1','question_123'],['query','question_124']]);
 });
 test('AI failure results preserve the page question number and distinguish timeout, rate and format errors',async()=>{
  for(const code of ['timeout','rate','answer',null]) {
@@ -223,6 +302,119 @@ test('DOM adapter fills blanks in order, preserves partial manual draft, and nev
  const p=page({manual:'人工保留'});const s=(await p.command('inspect')).snapshot;assert.equal(s.complete,true);assert.equal(s.questions[0].state,'partial');assert.ok(!JSON.stringify(s).includes('人工保留'));
  await p.command('fill',{item:{id:q.id,fingerprint:s.questions[0].fingerprint,solution:{kind:'fill',values:['替换禁止','4']}}});
  assert.deepEqual([...p.document.querySelectorAll('textarea')].map(e=>e.value),['人工保留','4']);assert.equal((await p.command('inspect')).snapshot.questions[0].state,'done');
+});
+function imagePaper(src) {
+  const p = page({ manual: '人工首空' });
+  const image = p.document.createElement('img');
+  image.setAttribute('src', src);
+  p.document.querySelector('.stem_title').append(image);
+  return { ...p, image };
+}
+function imageBatch(p, query) {
+  const actions = [];
+  const driver = createDriver({ chrome: { tabs: {
+    async create() { return { id: 8 }; },
+    async get() { return { id: 8, url: p.location.href }; },
+    async sendMessage(id, message) {
+      actions.push(message.action);
+      try { return await p.adapter.command(message); }
+      catch (error) { return { ok: false, error: error.message, fillBeforeWrite: error.fillBeforeWrite === true }; }
+    }
+  } }, getBatchId: () => 'batch' });
+  driver.verify = async () => true;
+  return { ...fixture({ driver, query }), actions };
+}
+test('batch fetches images on demand, sends them to AI once and keeps them out of paper snapshots and storage', async () => {
+  const src = 'data:image/png;base64,AAAA';
+  const p = imagePaper(src), asked = [];
+  const original = (await p.command('inspect')).snapshot;
+  assert.ok(!JSON.stringify(original).includes(src));
+  const f = imageBatch(p, async question => {
+    asked.push(question);
+    return { solution: { kind: 'fill', values: ['忽略', '图示答案'] } };
+  });
+  await f.start();
+  assert.equal((await settled(f.engine)).results[0].status, 'done');
+  assert.equal(asked.length, 1);
+  assert.deepEqual(asked[0].images, [src]);
+  assert.match(asked[0].stem, /\[图片 1\]/);
+  assert.ok(!JSON.stringify(asked).includes('人工首空'));
+  assert.deepEqual([...p.document.querySelectorAll('textarea')].map(field => field.value), ['人工首空', '图示答案']);
+  assert.equal(f.actions.filter(action => action === 'prepare-images').length, 1);
+  assert.ok(!JSON.stringify(f.data).includes(src));
+  p.image.setAttribute('src', 'data:image/png;base64,BBBB');
+  assert.notEqual((await p.command('inspect')).snapshot.fingerprint, original.fingerprint);
+  await assert.rejects(p.command('prepare-images', { id: q.id, fingerprint: original.questions[0].fingerprint }), /题目已变化/);
+});
+test('batch leaves a paper pending when an image cannot be read and never sends the signed image URL', async t => {
+  const src = 'https://cdn.example.test/private?token=only-for-page';
+  const p = imagePaper(src);
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 403 }));
+  let asked = false;
+  const f = imageBatch(p, async () => { asked = true; });
+  await f.start();
+  const { results } = await settled(f.engine);
+  assert.equal(results[0].status, 'pending');
+  assert.match(results[0].message, /第 1 题.*图片读取失败/);
+  assert.equal(asked, false);
+  assert.ok(!f.actions.some(action => ['fill', 'submit'].includes(action)));
+  assert.ok(!JSON.stringify(f.data).includes(src));
+  assert.ok(!JSON.stringify((await p.command('inspect')).snapshot).includes(src));
+});
+test('stopping during image preparation cancels the page fetch before the AI request', async t => {
+  const p = imagePaper('https://cdn.example.test/pending.png');
+  const started = deferred();
+  let aborted = false, asked = false;
+  t.mock.method(globalThis, 'fetch', (url, { signal }) => new Promise((_, reject) => {
+    signal.addEventListener('abort', () => { aborted = true; reject(Error('cancelled')); }, { once: true });
+    started.resolve();
+  }));
+  const f = imageBatch(p, async () => { asked = true; });
+  await f.start();
+  await started.promise;
+  await f.engine.stop();
+  assert.equal((await settled(f.engine)).stage, 'stopped');
+  assert.equal(aborted, true);
+  assert.equal(asked, false);
+  assert.ok(!f.actions.some(action => ['fill', 'submit'].includes(action)));
+});
+test('compound batch sends the shared and unanswered subquestion images in prompt order', async () => {
+  const shared = 'data:image/png;base64,AAAA', answered = 'data:image/png;base64,BBBB', pending = 'data:image/png;base64,CCCC';
+  const p = page();
+  const child = (id, src, value) => `<div class="question"><div class="exam_question_stem"><div class="stem_title">读图<img src="${src}"></div><span class="score">[简答题 5分]</span></div><div id="question_${id}" class="question_subjective_subject"><textarea>${value}</textarea></div></div>`;
+  p.document.querySelector('.question').innerHTML = `<div class="exam_question_stem"><div class="stem_title">材料<img src="${shared}"></div><span class="score">[组合题]</span></div><div id="question_123">${child(201, answered, '原来的答案')}${child(202, pending, '')}</div>`;
+  let asked;
+  const f = imageBatch(p, async question => {
+    asked = question;
+    return { solution: { kind: 'compound', parts: [{ id: 'question_202', solution: { kind: 'text', text: '读图答案' } }] } };
+  });
+  await f.start();
+  assert.equal((await settled(f.engine)).results[0].status, 'done');
+  assert.deepEqual(asked.images, [shared, pending]);
+  assert.match(asked.stem, /\[图片 1\]/);
+  assert.deepEqual(asked.parts.map(part => part.id), ['question_202']);
+  assert.match(asked.parts[0].stem, /\[图片 2\]/);
+  assert.deepEqual([...p.document.querySelectorAll('textarea')].map(field => field.value), ['原来的答案', '读图答案']);
+});
+test('a same-size canvas redraw after the AI request blocks the first write without rasterizing during inspections', async () => {
+  const p = page(), canvas = p.document.createElement('canvas');
+  p.document.querySelector('.stem_title').append(canvas);
+  canvas.width = canvas.height = 10;
+  let frame = 'data:image/png;base64,AAAA', reads = 0;
+  canvas.toDataURL = () => { reads++; return frame; };
+  const f = imageBatch(p, async question => {
+    assert.deepEqual(question.images, [frame]);
+    assert.equal(reads, 1);
+    frame = 'data:image/png;base64,BBBB';
+    return { solution: { kind: 'fill', values: ['a', 'b'] } };
+  });
+  await f.start();
+  const { results } = await settled(f.engine);
+  assert.equal(results[0].status, 'pending');
+  assert.match(results[0].message, /画布已重绘/);
+  assert.equal(reads, 2);
+  assert.equal(p.document.querySelector('textarea').value, '');
+  assert.ok(!f.actions.includes('submit'));
 });
 test('incomplete paper and stale document token cannot submit',async()=>{
  const p=page({total:2});assert.equal((await p.command('inspect')).snapshot.complete,false);
@@ -496,6 +688,45 @@ function entryDriver({navigate=true,loseAck=false,stopOnModal=false}={}) {
 test('driver handles blocked entry then waits for paper route, despite a complete preview',async()=>{
  const f=entryDriver({loseAck:true});const signal=new AbortController().signal;await f.driver.open(f.base,signal);const s=await f.driver.enter(f.base,signal);assert.equal(s.pageKind,'paper');assert.deepEqual(f.actions,['enter','enter-current']);
 });
+test('a complete resource preview waits for its entry button, including when it never appears', async () => {
+ for (const showEntry of [true, false]) {
+  const p = page();
+  p.document.querySelector('button[type=submit]').remove();
+  for (const field of p.document.querySelectorAll('textarea')) field.disabled = true;
+  const base = B.canonical(task()), signal = new AbortController().signal;
+  let clock = 0, clicks = 0;
+  const driver = createDriver({
+   chrome: {tabs: {
+    async create() { return {id: 1}; },
+    async get() { return {id: 1, url: p.location.href}; },
+    async sendMessage(id, message) { return p.adapter.command(message); }
+   }},
+   getBatchId: () => 'batch', now: () => clock, timeout: 1000,
+   async delay(ms) {
+    clock += ms;
+    if (showEntry && !p.document.querySelector('.entry_task_btn')) {
+     const entry = p.document.createElement('button');
+     entry.className = 'entry_task_btn';
+     entry.textContent = '点击进入任务>>>';
+     entry.onclick = () => {
+      clicks++;
+      p.location.pathname = '/app/jx-web/course_paper/mycourse/11/1/3/4';
+      for (const field of p.document.querySelectorAll('textarea')) field.disabled = false;
+     };
+     p.document.body.append(entry);
+    }
+   }
+  });
+  if (showEntry) {
+   assert.equal((await driver.open(base, signal)).canEnter, true);
+   assert.equal((await driver.enter(base, signal)).pageKind, 'paper');
+   assert.equal(clicks, 1);
+  } else {
+   await assert.rejects(driver.open(base, signal), /预览页.*入口/);
+   assert.equal(clicks, 0);
+  }
+ }
+});
 test('driver never repeats lost-ack fallback or treats complete preview as ready',async()=>{
  const f=entryDriver({navigate:false,loseAck:true});const signal=new AbortController().signal;await f.driver.open(f.base,signal);await assert.rejects(f.driver.enter(f.base,signal),/尚未进入/);assert.deepEqual(f.actions,['enter','enter-current']);
 });
@@ -624,11 +855,13 @@ function diagnosticPaper(items) {
 const diagnosticChoice = (multiple=false) => ({label:multiple?'多选题':'单选题',subject:multiple?'multiple':'single',body:['A','B'].map((label,i)=>`<label class="ant-${multiple?'checkbox':'radio'}-wrapper"><input type="${multiple?'checkbox':'radio'}" value="${i+1}"><span class="exam_answer_item_sequence">${label}.</span><div class="xy_rich_text_base">模拟选项${label}</div></label>`).join('')});
 test('observed lec4 and lec9 structures report every blocking question without saving uploaded content',async()=>{
  const lec4=diagnosticPaper([diagnosticChoice(),diagnosticChoice(true),{label:'附件题',subject:'attach',body:'<table><tr><td>private-code.py</td><td>上传成功</td></tr></table><input type="file">'},{label:'简答题',subject:'subjective',body:'<div class="DraftEditor-root"><div class="public-DraftEditor-content" contenteditable="false">私有报告正文</div></div>'}]);
- const s=lec4.snapshot();assert.equal(s.complete,true);
- const problems=B.questionProblems(s.questions);assert.match(problems,/第 3 题（附件题）：需要上传文件/);assert.match(problems,/第 4 题（简答题）：使用特殊文本编辑器/);
+ const preview=lec4.snapshot();assert.equal(preview.questions[3].state,'done');assert.ok(!JSON.stringify(preview).includes('私有报告'));
+ lec4.document.querySelector('.public-DraftEditor-content').textContent='';
+ const s=lec4.snapshot();assert.equal(s.complete,true);assert.equal(s.partialSafe,false);
+ const problems=B.questionProblems(s.questions);assert.match(problems,/第 3 题（附件题）：需要上传文件/);assert.match(problems,/第 4 题（简答题）：输入框被禁用或只读/);
  assert.ok(!problems.includes('第 1 题'));assert.ok(!problems.includes('第 2 题'));
  const f=fixture();f.driver.open=async()=>s;await f.start();const state=await settled(f.engine);
- assert.equal(state.results[0].status,'pending');assert.equal(state.results[0].message,`整份未提交。\n${problems}`);
+ assert.equal(state.results[0].status,'pending');assert.equal(state.results[0].message,`页面尚未确认可以安全填写其他题，整份未提交。\n${problems}`);
  assert.ok(!f.calls.some(c=>['query','fill','submit'].includes(c[0])));assert.ok(!JSON.stringify(f.data).includes('private-code'));assert.ok(!JSON.stringify(f.data).includes('私有报告'));assert.ok(!JSON.stringify(f.data).includes('只读诊断结构样本'));
  const lec9=diagnosticPaper([diagnosticChoice(true),{label:'附件题',subject:'attach',body:'<input type="file">'},{label:'附件题',subject:'attach',body:'<input type="file">'}]);
  const lec9Problems=B.questionProblems(lec9.snapshot().questions);
@@ -645,7 +878,9 @@ test('diagnostics retain page numbering and distinguish controls, images and par
  assert.match(text,/第 2 题（页面顺序）（简答题）：输入框被禁用或只读/);assert.match(text,/第 9 题（单选题）：选项标识缺失或重复/);
  p.document.querySelector('textarea[readonly]').value='已有人工答案';assert.ok(!B.questionProblems(p.snapshot().questions).includes('第 2 题'));
  p.document.querySelectorAll('._label')[1].textContent='填空3:';s=p.snapshot();assert.equal(s.complete,false);assert.match(s.reason,/第 7 题/);assert.match(s.reason,/空位数量或编号不一致/);
- const image=diagnosticPaper([{...diagnosticChoice(),stem:'含图片的题干<img src="https://example.test/image.png">'}]);assert.match(B.questionProblems(image.snapshot().questions),/批量自动作答暂未接入识图/);
+ const image=diagnosticPaper([{...diagnosticChoice(),stem:'含图片的题干<img src="https://example.test/image.png">'}]);
+ assert.equal(image.snapshot().questions[0].hasImages,true);
+ assert.equal(B.questionProblems(image.snapshot().questions),'');
  const disabled=diagnosticPaper([diagnosticChoice()]);disabled.document.querySelectorAll('input').forEach(e=>{e.disabled=true;});assert.match(B.questionProblems(disabled.snapshot().questions),/选择控件被禁用/);
 });
 
@@ -778,4 +1013,74 @@ test('closed execution tab still falls back to fresh platform receipt',async()=>
  let closed=false,reads=0;const base=B.canonical(task());
  const d=createDriver({chrome:{tabs:{async create(){return {id:1};},async get(){if(closed)throw Error('closed');return {id:1,url:base.url};},async sendMessage(){return {ok:true,snapshot:{pageToken:'p',complete:true}};}}},getBatchId:()=> 'batch',verifySubmitted:async()=>{reads++;return true;}});
  await d.open(base,new AbortController().signal);closed=true;assert.equal(await d.verify(base),true);assert.equal(reads,1);
+});
+
+test('preview entry button waits 700ms before clicking once, while start-answering has no buffer',async()=>{
+ const delays=[]; let bound=false, clicks=0;
+ const p=page({delay:async ms=>{delays.push(ms);if(ms===700)bound=true;}});
+ const entry=p.document.createElement('button');
+ entry.className='entry_task_btn'; entry.textContent='点击进入任务>>>';
+ entry.addEventListener('click',()=>{if(bound)clicks++;});
+ p.document.body.append(entry);
+ await p.command('enter');
+ assert.deepEqual(delays,[700]); assert.equal(clicks,1);
+ entry.remove(); delays.length=0;
+ const begin=p.document.createElement('button');
+ begin.textContent='立即开始答题';
+ let beginClicks=0; begin.addEventListener('click',()=>beginClicks++);
+ p.document.querySelector('#survey_page').append(begin);
+ await p.command('enter');
+ assert.deepEqual(delays,[]); assert.equal(beginClicks,1);
+});
+
+test('preview entry buffer aborts without clicking on halt, navigation, replacement, hide or disable',async()=>{
+ for(const mutation of ['halt','navigate','replace','hide','disable']){
+  let p, entry, clicks=0;
+  p=page({delay:async()=>{
+   if(mutation==='halt')await p.command('halt');
+   else if(mutation==='navigate')p.location.pathname='/app/jx-web/mycourse/11/resource/_/999';
+   else if(mutation==='replace'){
+    const fresh=p.document.createElement('button');fresh.className='entry_task_btn';fresh.textContent='点击进入任务>>>';fresh.addEventListener('click',()=>clicks++);
+    entry.replaceWith(fresh);
+   }else if(mutation==='hide')entry.hidden=true;
+   else if(mutation==='disable')entry.disabled=true;
+  }});
+  entry=p.document.createElement('button');entry.className='entry_task_btn';entry.textContent='点击进入任务>>>';
+  entry.addEventListener('click',()=>clicks++);p.document.body.append(entry);
+  await assert.rejects(p.command('enter'));
+  assert.equal(clicks,0,`mutation=${mutation} should not click`);
+ }
+});
+
+test('blocked-popup fallback waits 700ms and aborts if popup or button changes during buffer',async()=>{
+ function addPopup(p){
+  const modal=p.document.createElement('div');modal.className='ant-modal';
+  modal.innerHTML='<p>新窗口被浏览器拦截，无法正常打开新的页面，可选择在当前页直接跳转。</p><button>在当前页面跳转</button>';
+  p.document.body.append(modal); return modal;
+ }
+ const delays=[]; let bound=false, clicks=0;
+ const p=page({delay:async ms=>{delays.push(ms);if(delays.length===2)bound=true;}});
+ const entry=p.document.createElement('button');entry.className='entry_task_btn';entry.textContent='点击进入任务>>>';
+ entry.addEventListener('click',()=>{const m=addPopup(p);m.querySelector('button').addEventListener('click',()=>{if(bound)clicks++;});});
+ p.document.body.append(entry);
+ await p.command('enter');
+ await p.command('enter-current');
+ assert.deepEqual(delays,[700,700]); assert.equal(clicks,1);
+ for(const mutation of ['halt','replace-dialog','replace-button','hide','disable']){
+  let q, modal, btn, count=0, step=0;
+  q=page({delay:async()=>{
+   if(++step<2)return;
+   if(mutation==='halt')await q.command('halt');
+   else if(mutation==='replace-dialog'){modal.remove();const m2=addPopup(q);m2.querySelector('button').addEventListener('click',()=>count++);}
+   else if(mutation==='replace-button'){const b2=q.document.createElement('button');b2.textContent='在当前页面跳转';b2.addEventListener('click',()=>count++);btn.replaceWith(b2);}
+   else if(mutation==='hide')btn.hidden=true;
+   else if(mutation==='disable')btn.disabled=true;
+  }});
+  const e=q.document.createElement('button');e.className='entry_task_btn';e.textContent='点击进入任务>>>';
+  e.addEventListener('click',()=>{modal=addPopup(q);btn=modal.querySelector('button');btn.addEventListener('click',()=>count++);});
+  q.document.body.append(e);
+  await q.command('enter');
+  await assert.rejects(q.command('enter-current'));
+  assert.equal(count,0,`popup mutation=${mutation} should not click`);
+ }
 });

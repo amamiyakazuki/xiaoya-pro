@@ -57,7 +57,7 @@
       $('answerStage').textContent = batch.stage === 'finished' ? '本批答题处理结束，可以开始下一批。' : batch.message;
       $('answerResults').innerHTML = batch.tasks.map((task, index) => {
         const result = batch.results[index];
-        const label = ({ waiting: '等待', done: '已提交', draft: '待补附件', pending: '待处理', uncertain: '待核对' })[result.status] || '等待';
+        const label = ({ waiting: '等待', done: '已提交', draft: result.needsReview ? '待补题' : '待补附件', pending: '待处理', uncertain: '待核对' })[result.status] || '等待';
         const draftButton = result.status === 'draft' && result.draftPage
           ? `<button type="button" data-draft-index="${index}" ${draftLocked() ? 'disabled' : ''}>${openingCurrentDraft() && openingDraft.index === index ? '正在定位原页面…' : '返回原答题页（可选）'}</button>`
           : result.status === 'draft' ? '<span>原页面无法定位，可稍后从小雅课程手动打开。</span>' : '';

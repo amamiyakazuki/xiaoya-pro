@@ -3,7 +3,7 @@
   const KEY = 'xiaoyaAIConfig';
   function createService({ chrome: api = chrome, client = root.XiaoyaAI, fetchImpl = fetch, timeoutMs = 25000 } = {}) {
     const { AIError } = client;
-    let edits = Promise.resolve(), active = null;
+    let edits = Promise.resolve(), active = null, batchSeq = 0;
     let revision = `${Date.now()}-${Math.random()}`;
     const owner = sender => `${sender.tab?.id ?? 'panel'}:${sender.frameId ?? 0}:${sender.documentId || sender.url}`;
     const page = sender => sender?.id === api.runtime.id && Number.isInteger(sender.tab?.id) && sender.frameId === 0 && root.XiaoyaQuestion?.isPage(sender.url);
@@ -146,13 +146,13 @@
     }
     return { handle,
       available: async () => { await edits; const saved = await read(); return Boolean(saved?.key && await api.permissions.contains({ origins: [saved.permission] })); },
-      querySaved: async (question, signal) => {
+      querySaved: async (question, signal, instructions = '') => {
         const sender = { documentId: 'answer-batch', url: 'internal:answer-batch' };
-        const requestId = `batch-${Date.now()}`;
+        const requestId = `batch-${Date.now()}-${++batchSeq}`;
         const abort = () => { if (active?.requestId === requestId && active.owner === owner(sender)) cancel(); };
         if (signal?.aborted) throw new AIError('cancelled');
         signal?.addEventListener('abort', abort, { once: true });
-        try { return (await test({ requestId, question }, sender, true)).result; }
+        try { return (await test({ requestId, question, instructions }, sender, true)).result; }
         catch (error) { throw new AIError(client.failure(error).code); }
         finally { signal?.removeEventListener('abort', abort); }
       }

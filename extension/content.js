@@ -74,6 +74,7 @@
     void save();
   }
   function clearSelectedEffects() {
+    playbackAttempt = null;
     if (selectedBackground) background(false);
     selectedBackground = false;
     selectedVideo?.pause();
@@ -321,8 +322,8 @@
       const name = resourceName(selectedTarget?.name);
       // Task names can be display labels without a file extension. Only accept
       // those labels for the already ID-checked selection with a real player;
-      // explicit unsupported extensions must still be rejected.
-      const extensionlessVideo = selected && !/\.[a-z0-9]+$/i.test(normalizeName(name))
+      // explicit unsupported extensions (containing letters) must still be rejected.
+      const extensionlessVideo = selected && !/\.(?:[a-z][a-z0-9]*|\d+[a-z][a-z0-9]*)$/i.test(normalizeName(name))
         && normalizeName(name) === normalizeName(selectedTarget.name) && !!document.querySelector('video');
       if (selected && !matchesSelectedName(name, selectedTarget.name, extensionlessVideo)) {
         return waitForPage(now, `未识别到清单中的资源「${selectedTarget.name}」或该类型不受支持`);
@@ -383,7 +384,7 @@
         if (!normalRateVideos.has(video)) {
           try { video.playbackRate = run.options.rate; }
           catch {
-            video.playbackRate = 1;
+            try { video.playbackRate = 1; } catch {}
             normalRateVideos.add(video);
             log('播放器不支持所选倍速，已改为正常速度播放。');
           }

@@ -133,7 +133,7 @@ test('an account change during page verification prevents activation', async () 
 
 test('an unrelated pending receipt does not prevent returning to an already open draft page', async () => {
   const f = fixture();
-  f.setBatch({ id: 'batch-a', account: 'account-a', tasks: [draftTask], results: [{ status: 'draft', draftPage }], enabled: false, inFlight: true });
+  f.setBatch({ id: 'batch-a', account: 'account-a', tasks: [draftTask], results: [{ status: 'draft', needsReview: true, draftPage }], enabled: false, inFlight: true });
   const result = await f.send({ type: 'auto:open-draft', batchId: 'batch-a', taskId: draftTask.id });
   assert.equal(result.ok, true);
   assert.equal(f.activations, 1);
@@ -238,6 +238,12 @@ test('answer toolbar hides only when inactive on media filter and names a finish
   batch = { ...batch, stage: 'finished', inFlight: false, results: [{ status: 'draft', message: '待补附件', draftPage }] };
   state.chip = 'all';
   onChanged({ xiaoyaAnswerBatch: { newValue: batch } }, 'local');
+  const resultList = document.getElementById('answerResults');
+  assert.match(resultList.textContent, /待补附件：/);
+  batch.results = [{ status: 'draft', message: '第 3 题图片读取失败。', needsReview: true, draftPage }];
+  onChanged({ xiaoyaAnswerBatch: { newValue: batch } }, 'local');
+  assert.match(resultList.textContent, /待补题：第 3 题图片读取失败/);
+  assert.doesNotMatch(resultList.textContent, /待补附件/);
   const draftButton = document.querySelector('[data-draft-index="0"]');
   assert.ok(draftButton);
   draftButton.click();

@@ -47,7 +47,7 @@
 
     <dialog id="answerConfirm" aria-labelledby="answerConfirmTitle">
       <h3 id="answerConfirmTitle"></h3>
-      <p>下列任务将补齐空题并自动提交，包括只能提交一次的任务。含附件题时跳过附件，其余支持的题目填写后保留草稿，不自动提交，并继续下一份。已有人工答案和附件保留；其他题目无法填写时整份待处理。未选中的任务不会执行。</p>
+      <p>扩展会逐题查询并补齐空题，全部确认已答后自动提交，包括只能提交一次的任务。遇到能定位但不支持的题目，或单题 AI 异常在自动重试一次后仍失败，只跳过该题，继续填写其余空题。有跳过项就不交卷，保留原页、列出题号，再继续下一份。已有人工答案和附件不会覆盖。卷面不完整或无法核对题目身份时，不会填写。</p>
       <ol id="answerConfirmList"></ol>
       <div class="answer-actions"><button id="answerBack">返回修改</button><button id="answerGo">确认，开始作答并提交</button></div>
     </dialog>

@@ -33,9 +33,44 @@
   }
   function questionProblems(questions) {
     return questions.map((item, index) => {
-      if (item.state !== 'unknown' && (item.state === 'done' || item.writable)) return '';
+      if (item.state !== 'unknown' && (item.state === 'done' || item.state === 'draft' || item.writable)) return '';
       return `${questionLabel(item, index)}（${item.typeName || '题型未识别'}）：${item.reason || '无法确认作答状态或填写方式'}`;
     }).filter(Boolean).join('\n');
+  }
+  function skippedQuestions(questions) {
+    const skipped = new Map();
+    for (const item of questions) {
+      if (item.skipReason === undefined || item.skipReason === null || item.skipReason === '') continue;
+      // A skip is only valid if the page adapter explicitly classified the question
+      // and can identify and fingerprint it. Never infer a safe skip from an error.
+      if (typeof item.skipReason !== 'string' || !item.skipReason.trim() ||
+          !/^question_\d+$/.test(item.question?.id || '') ||
+          typeof item.fingerprint !== 'string' || !item.fingerprint || skipped.has(item.question.id)) {
+        throw Error('跳过题目的身份或状态无法可靠核对，整份未提交。');
+      }
+      skipped.set(item.question.id, { reason: item.skipReason, fingerprint: item.fingerprint });
+    }
+    return skipped;
+  }
+  function sameSkips(a, b) {
+    return a.size === b.size && [...a].every(([id, value]) => {
+      const next = b.get(id);
+      return next && value.reason === next.reason && value.fingerprint === next.fingerprint;
+    });
+  }
+  const GLOBAL_AI_ERRORS = new Set([
+    'cancelled', 'auth', 'unconfigured', 'permission', 'storage',
+    'forbidden', 'protocol', 'target', 'rate', 'network', 'busy'
+  ]);
+  const NO_RETRY_QUESTION_ERRORS = new Set(['question', 'images', 'vision']);
+  function retryHint(question) {
+    const type = question?.type;
+    if (type === 'judgment') return '上次回答格式不符合要求。请仅输出严格 JSON 对象 {"answer": true或false, "explanation": "简短中文解释"}，其中 answer 必须是 JSON 布尔值 true 或 false，不要返回选项字母或字符串。';
+    if (type === 'single') return '上次回答格式不符合要求。请仅输出严格 JSON 对象 {"answer": ["A"], "explanation": "简短中文解释"}，其中 answer 必须是仅含 1 个大写选项字母的数组。';
+    if (type === 'multiple') return '上次回答格式不符合要求。请仅输出严格 JSON 对象 {"answer": ["A","B"], "explanation": "简短中文解释"}，其中 answer 必须是大写选项字母数组。';
+    if (type === 'fill') return '上次回答格式不符合要求。请仅输出严格 JSON 对象，answer 必须是数量等于 blankCount 的非空字符串数组，explanation 必须是非空中文字符串。';
+    if (type === 'compound') return '上次回答格式不符合要求。请仅输出严格 JSON 对象，answer 必须是与每个子题 id 一一对应的对象数组，每项包含 id、answer、explanation。';
+    return '上次回答格式不符合要求。请仅输出严格 JSON 对象 {"answer": ..., "explanation": "简短中文解释"}，不要在 JSON 外附带多余文字。';
   }
   function createEngine({ storage, driver, getAccount, query, aiReady = async () => true, now = Date.now, uuid = () => crypto.randomUUID() }) {
     let state = null, job = null, reserved = false, epoch = 0, writes = Promise.resolve();
@@ -45,7 +80,7 @@
       writes = result.catch(() => {}); return result;
     };
     function noteInterruptedFill() {
-      if (state.stage !== 'filling' || state.results?.[state.index]?.status !== 'waiting') return;
+      if ((state.stage !== 'filling' && !state.partialWrite) || state.results?.[state.index]?.status !== 'waiting') return;
       state.results[state.index] = { status: 'pending', message: '填写已中断，可能已写入部分答案。请在原答题页核对。', at: now() };
     }
     const ready = (async () => {
@@ -106,40 +141,99 @@
             if (snapshot.submitted) { state.results[state.index++] = { status: 'done', message: '平台已提交，跳过', at: now() }; await save(); continue; }
             if (!snapshot.complete || !snapshot.questions.length) throw Error(snapshot.reason || '未读取到完整试卷，整份未提交。');
             const attachments = new Set(snapshot.questions.filter(item => item.question?.type === 'attachment').map(item => item.question.id));
+            const skipped = skippedQuestions(snapshot.questions);
             const problems = questionProblems(snapshot.questions);
-            if (questionProblems(snapshot.questions.filter(item => !attachments.has(item.question?.id)))) throw Error(`整份未提交。\n${problems}`);
-            const solutions = [];
+            if (skipped.size && snapshot.partialSafe !== true) throw Error(`页面尚未确认可以安全填写其他题，整份未提交。${problems ? `\n${problems}` : ''}`);
+            if (questionProblems(snapshot.questions.filter(item => !attachments.has(item.question?.id) && !skipped.has(item.question?.id)))) throw Error(`整份未提交。\n${problems}`);
+            state.partialWrite = false;
+            const failed = new Map();
+            let verifiedBeforeWrite = false, wroteCount = 0;
             for (const [index, item] of snapshot.questions.entries()) {
-              if (item.state === 'done' || attachments.has(item.question?.id)) continue;
+              if (item.state === 'done' || item.state === 'draft' || attachments.has(item.question?.id) || skipped.has(item.question?.id)) continue;
               const label = questionLabel(item, index);
-              await stage(run, 'querying', `正在查询${label}：${task.name}`);
-              let answer;
-              try { answer = await query(item.question, run.controller.signal); }
-              catch (error) { throw Error(`${label}：${error?.message || 'AI 查询失败，请手动核对。'}`); }
-              guard(run);
-              if (!answer?.solution) throw Error(`${label}：AI 未返回可填写的结构化答案。`);
-              solutions.push({ id: item.question.id, fingerprint: item.fingerprint, solution: answer.solution });
-            }
-            await identity(run);
-            await stage(run, 'filling', `正在补齐空题：${task.name}`);
-            const latest = await driver.inspect(task); guard(run);
-            if (!latest.complete || latest.fingerprint !== snapshot.fingerprint) throw Error('题目或选项发生变化，整份未提交。');
-            for (const solution of solutions) {
-              guard(run);
+              let answer = null, queryError = null;
+              for (let attempt = 0; attempt < 2; attempt++) {
+                await identity(run);
+                await stage(run, 'querying', `${attempt ? '正在重试' : '正在查询'}${label}：${task.name}`);
+                try {
+                  const question = item.hasImages ? { ...item.question, images: await driver.prepareImages(task, item) } : item.question;
+                  guard(run);
+                  const result = attempt
+                    ? await query(question, run.controller.signal, retryHint(item.question))
+                    : await query(question, run.controller.signal);
+                  guard(run);
+                  if (!result?.solution) throw Object.assign(Error('AI 未返回可填写的结构化答案。'), { code: 'answer' });
+                  answer = result;
+                  queryError = null;
+                  break;
+                } catch (error) {
+                  if (error?.fatal || !current(run)) throw error;
+                  if (error?.code && GLOBAL_AI_ERRORS.has(error.code)) {
+                    throw Error(`${label}：${error.message || 'AI 查询失败，请手动核对。'}`);
+                  }
+                  queryError = error;
+                  if (attempt === 0 && error?.code && NO_RETRY_QUESTION_ERRORS.has(error.code)) break;
+                }
+              }
+              if (queryError || !answer?.solution) {
+                failed.set(item.question.id, { label, reason: queryError?.message || 'AI 查询失败，请手动核对。' });
+                continue;
+              }
+              await identity(run);
+              await stage(run, 'filling', `正在填写${label}：${task.name}`);
+              if (!verifiedBeforeWrite) {
+                const latest = await driver.inspect(task); guard(run);
+                if (!latest.complete || latest.fingerprint !== snapshot.fingerprint ||
+                    (skipped.size && latest.partialSafe !== true) || !sameSkips(skipped, skippedQuestions(latest.questions))) {
+                  throw Error('题目、跳过状态或可填写状态发生变化，整份未提交。');
+                }
+                verifiedBeforeWrite = true;
+              }
+              const solution = {
+                id: item.question.id,
+                fingerprint: item.fingerprint,
+                solution: answer.solution,
+                ...(skipped.size ? { paperFingerprint: snapshot.fingerprint } : {})
+              };
               const result = await driver.fill(task, solution, run.controller.signal);
-              mayHaveWritten ||= !result?.preserved;
+              if (!result?.preserved) { mayHaveWritten = true; wroteCount += 1; state.partialWrite = true; }
               guard(run);
             }
+            const attachmentLabels = snapshot.questions.flatMap((item, index) => {
+              const label = questionLabel(item, index);
+              if (skipped.has(item.question?.id)) return [];
+              if (attachments.has(item.question?.id)) return [label];
+              return (item.attachmentParts || []).map(number => `${label}第 ${number} 小题`);
+            });
+            const skippedLabels = snapshot.questions.flatMap((item, index) => skipped.has(item.question?.id)
+              ? [`${questionLabel(item, index)}（${item.typeName || '题型未识别'}）：${skipped.get(item.question.id).reason}`] : []);
+            const failedLabels = [...failed.values()].map(({ label, reason }) => `${label}：${reason}`);
+            const hasAnswered = wroteCount > 0 || snapshot.questions.some(item => item.state === 'done' || item.state === 'draft');
+            if (failed.size && !hasAnswered) throw Error(failedLabels.join('\n'));
             const filled = await driver.inspect(task); guard(run);
-            if (!filled.complete || filled.fingerprint !== snapshot.fingerprint || filled.questions.some(q => !attachments.has(q.question?.id) && q.state !== 'done')) throw Error('填写后未确认应答题目全部已答，整份未提交；请在原答题页核对草稿。');
+            if (!filled.complete || filled.fingerprint !== snapshot.fingerprint ||
+                (skipped.size && filled.partialSafe !== true) || !sameSkips(skipped, skippedQuestions(filled.questions)) ||
+                filled.questions.some(q => !attachments.has(q.question?.id) && !skipped.has(q.question?.id) && !failed.has(q.question?.id) && q.state !== 'done' && !(q.attachmentParts?.length && q.state === 'draft'))) {
+              throw Error('填写后未确认应答题目全部已答，或跳过状态已变化，整份未提交；请在原答题页核对草稿。');
+            }
             await identity(run);
-            if (attachments.size) {
-              const skipped = snapshot.questions.map((item, index) => attachments.has(item.question?.id) ? questionLabel(item, index) : '').filter(Boolean).join('、');
-              const answered = filled.questions.length - attachments.size;
-              state.results[state.index++] = { status: 'draft', message: `已跳过附件题：${skipped}。\n${answered ? `页面已确认其余 ${answered} 题已答，已有答案保留。` : '本份仅含附件题，未填写。'}\n未提交，可稍后补附件。`, draftPage: driver.draftReference?.() || null, at: now() };
+            if (attachmentLabels.length || skippedLabels.length || failedLabels.length) {
+              const answered = filled.questions.reduce((sum, item) => {
+                if (attachments.has(item.question?.id) || skipped.has(item.question?.id) || failed.has(item.question?.id)) return sum;
+                return sum + (item.partIds?.length || 1) - (item.attachmentParts?.length || 0);
+              }, 0);
+              const lines = [];
+              if (attachmentLabels.length) lines.push(`已跳过附件题：${attachmentLabels.join('、')}。`);
+              if (skippedLabels.length) lines.push(`已跳过不支持的题目：\n${skippedLabels.join('\n')}`);
+              if (failedLabels.length) lines.push(`已跳过 AI 失败的题目（已重试）：\n${failedLabels.join('\n')}`);
+              lines.push(answered ? `页面已确认其余 ${answered} 题已答，已有答案保留。` : (skippedLabels.length || failedLabels.length) ? '本份没有可自动填写的题。' : '本份仅含附件题，未填写。');
+              lines.push((skippedLabels.length || failedLabels.length) ? '未提交，请补齐跳过的题目。' : '未提交，可稍后补附件。');
+              state.partialWrite = false;
+              state.results[state.index++] = { status: 'draft', ...((skippedLabels.length || failedLabels.length) ? { needsReview: true } : {}), message: lines.join('\n'), draftPage: driver.draftReference?.() || null, at: now() };
               await save();
               continue;
             }
+            state.partialWrite = false;
             await stage(run, 'submitting', `正在提交：${task.name}`);
             state.inFlight = true; await save();
             if (!current(run)) { await blockBeforeSubmit(run, '提交指令发出前已停止。'); return; }
@@ -153,9 +247,21 @@
           } catch (error) {
             if (state?.inFlight) { await resolveSubmission(run, task); return; }
             if (!current(run)) break;
-            if (error.fatal || (state.stage === 'filling' && mayHaveWritten)) {
-              noteInterruptedFill(); state.enabled = false; state.stage = 'paused'; state.message = error.message; await save(); break;
+            if (error.fatal || mayHaveWritten) {
+              if (state.stage === 'filling') noteInterruptedFill();
+              else if (mayHaveWritten && state.results?.[state.index]?.status === 'waiting') {
+                state.results[state.index] = {
+                  status: 'draft',
+                  needsReview: true,
+                  message: `${error.message || '执行中断'}\n已写入部分答案，未提交，请在原答题页核对。`,
+                  draftPage: driver.draftReference?.() || null,
+                  at: now()
+                };
+              }
+              state.partialWrite = false;
+              state.enabled = false; state.stage = 'paused'; state.message = error.message; await save(); break;
             }
+            state.partialWrite = false;
             state.results[state.index++] = { status: 'pending', message: error.message || '该任务需要人工处理', at: now() }; await save();
           }
         }
@@ -191,7 +297,7 @@
     async function permit(action) {
       await ready;
       const run = job; if (!run || !current(run) || action.batchId !== state.id || action.taskId !== state.tasks[state.index]?.id) return false;
-      const allowed = { enter: ['entering'], fill: ['filling'], submit: ['submitting'], confirm: ['submitting'] };
+      const allowed = { enter: ['entering'], 'prepare-images': ['querying'], fill: ['filling'], submit: ['submitting'], confirm: ['submitting'] };
       if (!allowed[action.action]?.includes(state.stage)) return false;
       try { await identity(run); return current(run) && allowed[action.action].includes(state.stage); } catch { await stop(); return false; }
     }

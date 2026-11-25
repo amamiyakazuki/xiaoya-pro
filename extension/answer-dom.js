@@ -4,6 +4,9 @@
   const fail = message => { throw new Error(message); };
   const subjectSelector = '[id^="question_"]';
   const direct = (node, selector) => [...node.querySelectorAll(selector)].filter(el => el.closest('.question') === node);
+  function childQuestions(node) {
+    return [...node.querySelectorAll('.question')].filter(child => child.parentElement?.closest('.question') === node);
+  }
   function ownStem(node) { return direct(node, '.exam_question_stem .stem_title')[0]; }
   function richText(node, resources) {
     let visited = 0;
@@ -56,13 +59,13 @@
     if (typeLabel) return 'open';
     fail('题型标记和结构不完整，请等待页面加载后重试。');
   }
-  function extract(node) {
+  function extract(node, partIds) {
     const resources = [], warnings = [];
     try {
       function parse(current, depth = 0) {
         const stemNode = ownStem(current);
         const subjects = direct(current, subjectSelector).filter(el => /^question_\d+$/.test(el.id));
-        const children = [...current.querySelectorAll('.question')].filter(child => child.parentElement?.closest('.question') === current);
+        const children = childQuestions(current);
         if (!stemNode || subjects.length !== 1 || (depth && children.length)) fail('题目或子题结构不完整，请等待加载完成后重试。');
         const subject = subjects[0];
         const typeLabel = (direct(current, '.exam_question_stem .score')[0]?.textContent || '').replace(/[\[\]［］]/g, '').replace(/\s*[\d.]+\s*分\s*$/, '').trim();
@@ -90,7 +93,12 @@
           if (!numbers.length || numbers.some((n, i) => Number(n) !== i + 1) || (markers.length && (markers.length !== numbers.length || markers.some((n, i) => Number(n) !== i + 1)))) fail('空位数量或编号不一致，未发送题目。');
           question.blankCount = numbers.length;
         }
-        if (type === 'compound') question.parts = children.map(child => parse(child, depth + 1));
+        if (type === 'compound') {
+          const selected = partIds ? children.filter(child =>
+            direct(child, subjectSelector).some(el => partIds.includes(el.id))) : children;
+          question.parts = selected.map(child => parse(child, depth + 1));
+          if (partIds && (question.parts.length !== partIds.length || !question.parts.every(part => partIds.includes(part.id)))) fail('组合题子题已变化，请重新读取。');
+        }
         return question;
       }
       const question = schema.validate(parse(node));
@@ -101,6 +109,6 @@
     const value = extract(node);
     return JSON.stringify({ ...value, resources: value.resources?.map(({ kind, source }) => ({ kind, source })) });
   }
-  root.XiaoyaAnswerDOM = { extract, fingerprint, richText };
+  root.XiaoyaAnswerDOM = { extract, fingerprint, richText, childQuestions };
   if (typeof module !== 'undefined') module.exports = root.XiaoyaAnswerDOM;
 })(globalThis);

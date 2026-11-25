@@ -32,13 +32,14 @@
     for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
     return schema.imageData(`data:${mime};base64,${btoa(binary)}`);
   }
+  function canvasData(element) {
+    if (!element.width || !element.height || element.width * element.height > 16000000) fail('图片尺寸过大或尚未加载。');
+    try { return schema.imageData(element.toDataURL('image/png')); } catch { fail('浏览器不允许读取此图像，请提供可读取的题目图片。'); }
+  }
   async function raster(resource, signal, document = root.document) {
     if (signal?.aborted) fail('已取消图片读取。');
     const element = resource.node;
-    if (resource.kind === 'canvas') {
-      if (!element.width || !element.height || element.width * element.height > 16000000) fail('图片尺寸过大或尚未加载。');
-      try { return schema.imageData(element.toDataURL('image/png')); } catch { fail('浏览器不允许读取此图像，请提供可读取的题目图片。'); }
-    }
+    if (resource.kind === 'canvas') return canvasData(element);
     // SVG rendered as an image cannot run scripts. Also reject external references.
     if (element.querySelector('script,foreignObject,image') || [...element.querySelectorAll('*'), element].some(el => [...el.attributes].some(a => /^on/i.test(a.name) || (/href$/i.test(a.name) && !a.value.startsWith('#')) || /url\(\s*[^#]/i.test(a.value)))) fail('此公式图包含外部资源，请提供公式原文或普通图片。');
     const image = new Image();
@@ -83,6 +84,6 @@
     }
     return images.length ? { ...extracted.question, images } : extracted.question;
   }
-  root.XiaoyaAnswerMedia = { safeURL, readImage, prepare };
+  root.XiaoyaAnswerMedia = { safeURL, readImage, prepare, canvasData };
   if (typeof module !== 'undefined') module.exports = root.XiaoyaAnswerMedia;
 })(globalThis);

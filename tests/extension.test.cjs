@@ -243,14 +243,23 @@ test('selected extensionless video title plays past the loading timeout and wait
 });
 
 test('extensionless selected names still require matching identity and a loaded video', async () => {
-  for (const page of [{ selectedNode: '13' }, { taskName: '其他视频' }, { courseware: true }, { taskName: 'lesson.avi' }]) {
-    const name = page.taskName === 'lesson.avi' ? page.taskName : '2. 驱动程序的处理过程';
+  for (const page of [{ selectedNode: '13' }, { taskName: '其他视频' }, { courseware: true }, { taskName: 'lesson.avi' }, { taskName: 'archive.7z' }]) {
+    const name = page.taskName && /\.(avi|7z)$/i.test(page.taskName) ? page.taskName : '2. 驱动程序的处理过程';
     const f = fixture({ selection: [{ ...selectedResources[0], name }], taskName: name, ...page });
     await f.settle(); await f.tick(31000);
     assert.equal(f.completedClicks, 0);
     assert.equal(f.video.playbackRate, undefined);
     assert.ok(f.sent.some(msg => msg.run?.enabled === false));
     assert.equal(f.sent.filter(msg => msg.type === 'selected-advance').length, 0);
+  }
+});
+
+test('extensionless selected video accepts numeric section or version endings like Python 3.12', async () => {
+  for (const name of ['第 2 章 Python 3.12', '2.1']) {
+    const f = fixture({ selection: [{ ...selectedResources[0], name }], taskName: name, ended: false, headingAttribute: false });
+    await f.settle(); await f.tick(); await f.tick(31000);
+    assert.equal(f.video.playbackRate, 2);
+    assert.equal(f.sent.at(-1).run.enabled, true);
   }
 });
 

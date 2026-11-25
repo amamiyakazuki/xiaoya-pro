@@ -42,23 +42,26 @@
       return result.snapshot;
     }
     async function wait(task, signal, previous) {
-      const until = now() + timeout; let last;
+      const until = now() + timeout; let last, preview;
       const fallbackPages = new Set();
       do {
         if (signal?.aborted || stopped) throw Error('已停止');
         try {
           last = await inspect(task);
+          // A resource preview can render all questions before its entry button.
+          preview = last.pageKind === 'resource' && !last.hasSubmitControl;
           if (previous && last.canEnterCurrent && !fallbackPages.has(last.pageToken)) {
             if (signal?.aborted || stopped) throw Error('已停止');
             fallbackPages.add(last.pageToken);
             await send(task, 'enter-current').catch(error => { if (error.fatal) throw error; });
           } else if (last.submitted || (!previous || last.pageKind === 'paper') && (
-            last.complete && !last.canBegin || last.canBegin && !previous?.canBegin || last.canEnter && !previous?.canEnter)) return last;
+            last.complete && !preview && !last.canBegin || last.canBegin && !previous?.canBegin || last.canEnter && !previous?.canEnter)) return last;
           // If the paper loaded but is incomplete, keep waiting for lazy rendering.
         } catch (error) { if (error.fatal) throw error; }
         await delay(350);
       } while (now() < until);
       if (previous && (last?.pageKind !== 'paper' || last.canBegin)) throw Error('尚未进入可作答页面，可能遇到新窗口拦截或开始入口未响应。请检查执行页后重新选择该任务。');
+      if (preview && last.complete) throw Error('测验预览页已加载，但未出现进入答题的入口。请检查执行页后重试。');
       if (last) return last;
       throw Error('作业页面加载超时，请在平台检查后重试。');
     }
@@ -125,6 +128,13 @@
     }
     return { open, enter, inspect, verify,
       usesTab: id => id === tabId || children.has(id),
+      async prepareImages(task, item) {
+        const { images } = await send(task, 'prepare-images', {
+          id: item.question.id, fingerprint: item.fingerprint, partIds: item.question.parts?.map(part => part.id)
+        });
+        if (!images?.length) throw Error('未读取到本题图片。');
+        return images;
+      },
       fill: (task, item) => send(task, 'fill', { item }),
       submit: (task, fingerprint) => send(task, 'submit', { fingerprint }),
       draftReference: () => Number.isInteger(tabId) && pageToken ? { tabId, pageToken } : null,

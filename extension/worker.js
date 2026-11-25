@@ -11,7 +11,7 @@ function answers() {
     verifySubmitted: async task => answerStore.checkSubmitted(task, (await answerEngine.get()).account)
   });
   answerEngine = globalThis.XiaoyaAnswerBatch.createEngine({ storage: chrome.storage.local, driver: answerDriver,
-    getAccount: () => answerStore.currentAccount(), query: (q, signal) => aiService.querySaved(q, signal),
+    getAccount: () => answerStore.currentAccount(), query: (q, signal, instructions) => aiService.querySaved(q, signal, instructions),
     aiReady: () => aiService.available()
   });
   return answerEngine;
@@ -30,12 +30,12 @@ async function handleAnswer(message, sender, ticket) {
   if (message.type === 'auto:verify') return engine.verify();
   if (message.type === 'auto:open-draft') {
     const batch = await engine.get();
-    if (!batch || batch.id !== message.batchId) throw Error('这份待补附件记录已被新批次替换，请刷新侧栏。');
+    if (!batch || batch.id !== message.batchId) throw Error('这份答题草稿记录已被新批次替换，请刷新侧栏。');
     const canFocus = () => !pendingAnswerStarts && !engine.busy() && engine.getId() === batch.id;
     if (!canFocus()) throw Error('批次仍在运行或准备中，暂时不能返回草稿页。');
     if (await answerStore.currentAccount() !== batch.account) throw Error('当前小雅账号与这份草稿所属账号不同，请切回原账号。');
     const index = batch.tasks.findIndex(task => task.id === message.taskId);
-    if (index < 0 || batch.results[index]?.status !== 'draft' || !batch.results[index]?.draftPage) throw Error('找不到这份批次中的待补附件页面。');
+    if (index < 0 || batch.results[index]?.status !== 'draft' || !batch.results[index]?.draftPage) throw Error('找不到该任务的答题草稿页。');
     const task = batch.tasks[index];
     const draftPage = batch.results[index].draftPage;
     const focused = await answerDriver.focusDraft(task, draftPage, async () => {

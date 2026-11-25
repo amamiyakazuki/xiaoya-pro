@@ -33,6 +33,8 @@ test('question validation strips extra fields and limits size/options/identity',
 });
 test('answers must match real options, cardinality and explanation; no unparsed fallback', () => {
   assert.equal(schema.answer('```json\n{"answer":["A"],"explanation":"ok"}\n```', question).answer, 'A. 2');
+  assert.equal(schema.answer('<think>先思考一下</think>\n答案如下：\n```json\n{"answer":["A"],"explanation":"ok"}\n```', question).answer, 'A. 2');
+  assert.equal(schema.answer('好的，{"answer":["A"],"explanation":"ok"} 以上。', question).answer, 'A. 2');
   for (const answer of [null, 'A', [], ['C'], ['A', 'A'], ['A', 'B']]) assert.throws(() => schema.answer(JSON.stringify({ answer, explanation: 'ok' }), question));
   assert.throws(() => schema.answer('{"answer":["A"],"explanation":""}', question));
   assert.throws(() => schema.answer('答案 A', question));
