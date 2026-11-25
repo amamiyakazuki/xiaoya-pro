@@ -72,7 +72,8 @@ function fixture({ aggressive = true, done = false, buttonVisible = true, button
     } } }
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'extension/task-timing.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(root, 'extension/content.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(root, 'extension/content.js'), 'utf8'), context,
+    { filename: path.join(root, 'extension/content.js') });
 
   const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
   return {

@@ -70,7 +70,8 @@ function fixture({ done = false, ended = true, file = true, courseware = false, 
         return { ok: true, accepted: true };
       } } } });
   vm.runInContext(fs.readFileSync(path.join(root, 'extension/task-timing.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(root, 'extension/content.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(root, 'extension/content.js'), 'utf8'), context,
+    { filename: path.join(root, 'extension/content.js') });
   const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
   return { sent, events, document, video, assigned, settle,
     command(type) { listener({ type }, {}, () => {}); },
@@ -88,6 +89,186 @@ const selectedResources = [
   { id: '42:11', courseId: '42', nodeId: '11', name: 'first' },
   { id: '42:13', courseId: '42', nodeId: '13', name: 'first' }
 ];
+
+test('playback recovery: pending play cannot block queue checks indefinitely', async () => {
+  const f = fixture({ selection: selectedResources, ended: false });
+  f.video.paused = true;
+  let resolvePlay;
+  f.video.play = () => new Promise(resolve => { resolvePlay = resolve; });
+  await f.settle(); await f.tick(); await f.tick(16000);
+  assert.ok(f.sent.some(msg => msg.run?.enabled === false && /播放.*超时/.test(msg.run.status)));
+  assert.equal(f.completedClicks, 0);
+  const pauses = f.pauses;
+  resolvePlay(); await f.settle();
+  assert.ok(f.pauses > pauses, 'late playback is paused after timeout');
+});
+
+test('playback recovery: pending play does not hide navigation to another resource', async () => {
+  const f = fixture({ selection: selectedResources, ended: false });
+  f.video.paused = true;
+  f.video.play = () => new Promise(() => {});
+  await f.settle(); await f.tick();
+  f.navigate('/app/jx-web/mycourse/42/resource/_/13'); await f.tick();
+  assert.ok(f.sent.some(msg => msg.run?.enabled === false && /地址不一致/.test(msg.run.status)));
+});
+
+test('playback recovery: an unsupported playback rate falls back to normal playback', async () => {
+  const f = fixture({ selection: selectedResources, ended: false });
+  let rate = 1, plays = 0;
+  Object.defineProperty(f.video, 'playbackRate', { get() { return rate; }, set(value) {
+    if (value !== 1) throw Object.assign(new Error('Unsupported rate'), { name: 'NotSupportedError' });
+    rate = value;
+  } });
+  f.video.paused = true;
+  f.video.play = async () => { plays++; f.video.paused = false; };
+  await f.settle(); await f.tick(); await f.tick();
+  assert.equal(plays, 1);
+  assert.equal(rate, 1);
+  assert.equal(f.sent.at(-1).run.enabled, true);
+  assert.equal(f.completedClicks, 0);
+});
+
+test('playback recovery: full extensionless document title survives a truncated heading', async () => {
+  const name = '2. 驱动程序的处理过程';
+  const f = fixture({ selection: [{ ...selectedResources[0], name }], taskName: name, ended: false });
+  const query = f.document.querySelector;
+  f.document.querySelector = selector => selector === 'h5.title'
+    ? { textContent: '2. 驱动程序的处...', getAttribute() { return null; } } : query(selector);
+  await f.settle(); await f.tick(); await f.tick(31000);
+  assert.equal(f.video.playbackRate, 2);
+  assert.equal(f.sent.at(-1).run.enabled, true);
+});
+
+test('playback recovery: rejection from a replaced player cannot stop the new player', async () => {
+  const f = fixture({ selection: selectedResources, ended: false });
+  f.video.paused = true;
+  let rejectPlay;
+  f.video.play = () => new Promise((resolve, reject) => { rejectPlay = reject; });
+  await f.settle(); await f.tick();
+  const replacement = { ...f.video, paused: false };
+  const query = f.document.querySelector;
+  f.document.querySelector = selector => selector === 'video' ? replacement : query(selector);
+  rejectPlay(Object.assign(new Error('old player failed'), { name: 'NotSupportedError' }));
+  await f.settle(); await f.tick();
+  assert.equal(f.sent.at(-1).run.enabled, true);
+  assert.equal(replacement.playbackRate, 2);
+  assert.equal(f.completedClicks, 0);
+});
+
+test('playback recovery: autoplay rejection and interrupted loading can retry successfully', async () => {
+  for (const name of ['NotAllowedError', 'AbortError']) {
+    const f = fixture({ selection: selectedResources, ended: false });
+    f.video.paused = true;
+    let plays = 0;
+    f.video.play = async () => {
+      if (++plays === 1) throw Object.assign(new Error('test error'), { name });
+      f.video.paused = false;
+    };
+    await f.settle(); await f.tick();
+    assert.match(f.sent.at(-1).run.status, name === 'AbortError' ? /中断/ : /阻止自动播放/);
+    await f.tick(1000); assert.equal(plays, 1);
+    await f.tick(); await f.tick();
+    assert.equal(plays, 2);
+    assert.equal(f.sent.at(-1).run.enabled, true);
+    assert.match(f.sent.at(-1).run.status, /播放中/);
+    assert.equal(f.completedClicks, 0);
+  }
+});
+
+test('playback recovery: format failures and media errors pause without completion', async () => {
+  for (const errorSource of ['promise', 'throw', 'media']) {
+    const f = fixture({ selection: selectedResources, ended: false });
+    f.video.paused = true;
+    if (errorSource === 'media') f.video.error = { code: 4 };
+    else f.video.play = () => {
+      const error = Object.assign(new Error('unsupported codec'), { name: 'NotSupportedError' });
+      if (errorSource === 'throw') throw error;
+      return Promise.reject(error);
+    };
+    await f.settle(); await f.tick();
+    assert.ok(f.sent.some(msg => msg.run?.enabled === false && /视频.*(无法播放|加载失败)/.test(msg.run.status)));
+    assert.equal(f.completedClicks, 0);
+    assert.equal(f.sent.filter(msg => msg.type === 'selected-advance').length, 0);
+  }
+});
+
+test('playback recovery: late rejection after stop or navigation cannot overwrite status', async () => {
+  for (const action of ['stop', 'navigate']) {
+    const f = fixture({ selection: selectedResources, ended: false });
+    f.video.paused = true;
+    let rejectPlay;
+    f.video.play = () => new Promise((resolve, reject) => { rejectPlay = reject; });
+    await f.settle(); await f.tick();
+    if (action === 'stop') f.command('selected-halt');
+    else f.navigate('/app/jx-web/mycourse/42/resource/_/13');
+    await f.tick();
+    const status = f.sent.at(-1).run.status;
+    rejectPlay(Object.assign(new Error('late rejection'), { name: 'NotSupportedError' }));
+    await f.settle(); await f.tick();
+    assert.equal(f.sent.at(-1).run.status, status);
+    assert.equal(f.completedClicks, 0);
+  }
+});
+
+test('playback recovery: a late successful old player is paused after replacement', async () => {
+  const f = fixture({ selection: selectedResources, ended: false });
+  f.video.paused = true;
+  let resolvePlay;
+  f.video.play = () => new Promise(resolve => { resolvePlay = resolve; });
+  await f.settle(); await f.tick();
+  const query = f.document.querySelector;
+  const replacement = { ...f.video, paused: false };
+  f.document.querySelector = selector => selector === 'video' ? replacement : query(selector);
+  const pauses = f.pauses;
+  resolvePlay(); await f.settle(); await f.tick();
+  assert.ok(f.pauses > pauses);
+  assert.equal(f.sent.at(-1).run.enabled, true);
+  assert.equal(replacement.playbackRate, 2);
+});
+
+test('selected extensionless video title plays past the loading timeout and waits for platform confirmation', async () => {
+  const name = '2. 驱动程序的处理过程';
+  const f = fixture({ selection: [{ ...selectedResources[0], name }], taskName: name, ended: false, headingAttribute: false });
+  await f.settle(); await f.tick(); await f.tick(31000);
+  assert.equal(f.video.playbackRate, 2);
+  assert.equal(f.sent.at(-1).run.enabled, true);
+  assert.equal(f.completedClicks, 0);
+  assert.equal(f.sent.filter(msg => msg.type === 'selected-advance').length, 0);
+  f.video.ended = true;
+  await f.tick();
+  assert.equal(f.completedClicks, 1);
+  assert.equal(f.sent.filter(msg => msg.type === 'selected-advance').length, 0);
+  f.setDone(true); await f.tick();
+  assert.equal(f.sent.filter(msg => msg.type === 'selected-advance').length, 1);
+});
+
+test('extensionless selected names still require matching identity and a loaded video', async () => {
+  for (const page of [{ selectedNode: '13' }, { taskName: '其他视频' }, { courseware: true }, { taskName: 'lesson.avi' }]) {
+    const name = page.taskName === 'lesson.avi' ? page.taskName : '2. 驱动程序的处理过程';
+    const f = fixture({ selection: [{ ...selectedResources[0], name }], taskName: name, ...page });
+    await f.settle(); await f.tick(31000);
+    assert.equal(f.completedClicks, 0);
+    assert.equal(f.video.playbackRate, undefined);
+    assert.ok(f.sent.some(msg => msg.run?.enabled === false));
+    assert.equal(f.sent.filter(msg => msg.type === 'selected-advance').length, 0);
+  }
+});
+
+test('extensionless selected video waits for its player and accepts normalized whitespace', async () => {
+  const name = '2. 驱动程序的处理过程';
+  const f = fixture({ selection: [{ ...selectedResources[0], name }], taskName: '2.\u00a0\u200b 驱动程序的处理过程', ended: false });
+  const query = f.document.querySelector;
+  f.document.querySelector = selector => selector === 'video' ? null : query(selector);
+  await f.settle(); await f.tick();
+  assert.equal(f.video.playbackRate, undefined);
+  assert.equal(f.completedClicks, 0);
+  assert.equal(f.sent.at(-1).run.enabled, true);
+  f.document.querySelector = query;
+  await f.tick(); await f.tick(31000);
+  assert.equal(f.video.playbackRate, 2);
+  assert.equal(f.sent.at(-1).run.enabled, true);
+  assert.equal(f.completedClicks, 0);
+});
 
 test('selected content requests one advancement after platform confirmation, with no directory traversal', async () => {
   const f = fixture({ selection: selectedResources });
