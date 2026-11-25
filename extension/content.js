@@ -10,6 +10,8 @@
   let lastAttempt = 0;
   let transition = null;
   let lastPlay = 0;
+  let playbackAttempt = null;
+  const normalRateVideos = new WeakSet();
   let lastStatus = '';
   let taskTiming = null;
   let timingProbeAt = 0;
@@ -45,7 +47,7 @@
     if (now - arrived < 30000) { log(`等待页面加载：${text}`); return; }
     stop(`页面加载超时：${text}，已暂停，请检查页面或网络后重新开始。`);
   }
-  function resourceName() {
+  function resourceName(expectedName) {
     const heading = document.querySelector('h5.title');
     const candidates = [
       heading?.getAttribute('title'),
@@ -56,6 +58,11 @@
     // The platform truncates long heading text and puts the full filename in
     // title. Short headings may have no attribute at all. Only accept a full
     // supported filename; never match an ellipsis by a loose prefix.
+    if (expectedName) {
+      const matching = candidates.find(value => normalizeName(value) === normalizeName(expectedName)
+        || (supported.test(normalizeName(value)) && normalizeName(value).replace(supported, '') === normalizeName(expectedName)));
+      if (matching) return matching;
+    }
     return candidates.find(value => supported.test(normalizeName(value))) || candidates[0] || '';
   }
   const save = () => chrome.runtime.sendMessage({ type: 'save', run }).catch(() => {});
@@ -74,6 +81,7 @@
   }
   function stop(text) {
     run.enabled = false;
+    playbackAttempt = null;
     if (run.mode === 'selected') clearSelectedEffects();
     else {
       background(false);
@@ -83,9 +91,32 @@
     else log(text);
   }
 
-  function matchesSelectedName(name, expectedName) {
+  function playVideo(video, active, now) {
+    const attempt = { video, active, url: location.href, at: now };
+    playbackAttempt = attempt;
+    lastPlay = now;
+    // Do not await play(): browsers may leave its promise pending while loading.
+    // The next tick must still check navigation, cancellation and the deadline.
+    Promise.resolve().then(() => video.play()).then(() => {
+      if (playbackAttempt !== attempt || run !== active || !active.enabled
+          || location.href !== attempt.url || document.querySelector('video') !== video) {
+        video.pause();
+        return;
+      }
+      playbackAttempt = null;
+    }, error => {
+      if (playbackAttempt !== attempt || run !== active || !active.enabled || location.href !== attempt.url) return;
+      playbackAttempt = null;
+      if (document.querySelector('video') !== video) return;
+      if (error?.name === 'AbortError') log('视频播放被加载或切换中断，稍后重试…');
+      else if (error?.name === 'NotAllowedError') log('浏览器阻止自动播放，请手动点击播放，或启用静音自动播放。');
+      else stop('视频无法播放，请检查视频格式或播放器后重新开始。');
+    });
+  }
+
+  function matchesSelectedName(name, expectedName, extensionlessVideo = false) {
     const actual = normalizeName(name), expected = normalizeName(expectedName);
-    return supported.test(actual) && (actual === expected || (!supported.test(expected) && actual.replace(supported, '') === expected));
+    return (supported.test(actual) || extensionlessVideo) && (actual === expected || (!supported.test(expected) && actual.replace(supported, '') === expected));
   }
 
   async function completeSelected(active) {
@@ -263,6 +294,7 @@
         lastAttempt = 0;
         transition = null;
         lastPlay = 0;
+        playbackAttempt = null;
         taskTiming = null;
         timingProbeAt = 0;
         homeSignature = '';
@@ -286,8 +318,13 @@
       if (run.mode === 'home' && atHome) return await readHome(now);
       if (run.mode === 'home' && !info.file) return waitForPage(now, '首页待办尚未打开到具体资源');
       if (!selected && !info.file) return await next(info);
-      const name = resourceName();
-      if (selected && !matchesSelectedName(name, selectedTarget.name)) {
+      const name = resourceName(selectedTarget?.name);
+      // Task names can be display labels without a file extension. Only accept
+      // those labels for the already ID-checked selection with a real player;
+      // explicit unsupported extensions must still be rejected.
+      const extensionlessVideo = selected && !/\.[a-z0-9]+$/i.test(normalizeName(name))
+        && normalizeName(name) === normalizeName(selectedTarget.name) && !!document.querySelector('video');
+      if (selected && !matchesSelectedName(name, selectedTarget.name, extensionlessVideo)) {
         return waitForPage(now, `未识别到清单中的资源「${selectedTarget.name}」或该类型不受支持`);
       }
       const target = run.homeTask?.target;
@@ -298,7 +335,7 @@
         if (now - arrived < 20000) return log('正在等待目标资源标题加载…');
         return stop(`当前资源与选中的首页待办不一致，已暂停。待办：${JSON.stringify(run.homeTask?.name)}；页面：${JSON.stringify(name)}`);
       }
-      if (!supported.test(normalizeName(name))) return waitForPage(now, `无法识别资源标题或类型：${JSON.stringify(name)}`);
+      if (!supported.test(normalizeName(name)) && !extensionlessVideo) return waitForPage(now, `无法识别资源标题或类型：${JSON.stringify(name)}`);
       if (finished()) {
         if (selected) return await completeSelected(active);
         if (!run.completed.includes(location.pathname)) run.completed.push(location.pathname);
@@ -343,21 +380,26 @@
       let ready = false;
       if (video) {
         if (selected) selectedVideo = video;
-        video.playbackRate = run.options.rate;
+        if (!normalRateVideos.has(video)) {
+          try { video.playbackRate = run.options.rate; }
+          catch {
+            video.playbackRate = 1;
+            normalRateVideos.add(video);
+            log('播放器不支持所选倍速，已改为正常速度播放。');
+          }
+        }
         if (run.options.muted) video.muted = true;
         if (video.error) return stop('视频加载失败，请检查网络后重新开始。');
-        if (!video.ended && video.paused && now - lastPlay > 5000) {
-          lastPlay = now;
-          try { await video.play(); }
-          catch { if (active.enabled) log('浏览器阻止自动播放，请手动点击播放，或启用静音自动播放。'); return; }
-          if (run !== active || !active.enabled) {
-            if (selected) video.pause();
-            return;
-          }
-          if (selected && location.href !== lastUrl) return stop('播放时资源页面已切换，队列已暂停。');
+        if (playbackAttempt?.video === video) {
+          if (now - playbackAttempt.at >= 15000) return stop('视频播放启动超时，请手动检查播放器后重新开始。');
+          return log('正在等待视频开始播放…');
+        }
+        if (!video.ended && video.paused) {
+          if (now - lastPlay > 5000) playVideo(video, active, now);
+          return;
         }
         ready = video.ended || (Number.isFinite(video.duration) && video.duration > 0 && video.currentTime >= video.duration - 0.5);
-        if (!ready) log(`播放中：${name} · ${run.options.rate} 倍速`);
+        if (!ready) log(`播放中：${name} · ${video.playbackRate} 倍速`);
       } else if (!/\.(mp4|webm|m4v|mov)$/i.test(normalizeName(name))) {
         if (!taskTiming) {
           if (timingProbeAt && now - timingProbeAt > 15000) {
